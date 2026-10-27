@@ -24,7 +24,7 @@ export function validateScanOptions(id, value) {
 
 
 const agentFields = {
-  cloudflare: { skillRoot:'absolute', revision:'revision', model:'string', workRoot:'absolute', effort:['low','medium','high','xhigh'], profile:['quick'], maxAgents:'agents' },
+  cloudflare: { strategy:['native-collab','supervised-codex-workers'], skillRoot:'absolute', revision:'revision', model:'string', workRoot:'absolute', effort:['low','medium','high','xhigh'], profile:['quick'], maxAgents:'agents' },
   anthropic: { skillRoot:'absolute', revision:'revision', model:'string', workRoot:'absolute', maxTurns:'integer', maxBudgetUsd:'positive', mode:['vuln-scan'], single:'true', noScore:'true' },
 };
 export function validateAgentOptions(id, value) {

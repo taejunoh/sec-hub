@@ -43,6 +43,7 @@
       "command": "/absolute/path/to/codex",
       "args": [],
       "agentOptions": {
+        "strategy": "supervised-codex-workers",
         "skillRoot": "/absolute/path/to/cloudflare-security-audit",
         "revision": "c1c8a8c1471069fb0e188eeaff69b8e8db6564a8",
         "model": "gpt-6.1-sol",

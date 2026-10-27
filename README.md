@@ -1,6 +1,6 @@
 # Sec Hub
 
-> 현재 0.2.0 소스에는 공식 스킬 실행기가 구현되어 있지만, **7개 전체 실제 실행 검증은 미완료**입니다. [진행 상태와 외부 실행 조건](verification/SEVEN-TOOL-STATUS.md)을 확인하세요. 완료 검증된 설치 패키지는 0.1.1입니다.
+> 현재 0.2.0 소스에는 공식 스킬 실행기가 구현되어 있지만, **7개 전체 실제 실행 검증은 미완료**입니다. [진행 상태와 외부 실행 조건](verification/SEVEN-TOOL-STATUS.md)을 확인하세요. 완료 검증된 설치 패키지는 0.1.1입니다. Cloudflare와 코드 작업은 지금 계속 진행하며, Anthropic 실제 실행만 확인된 주간 사용량 한도 해제 이후로 보류합니다.
 
 Sec Hub는 로컬 저장소에 설치된 보안 검사기를 실행하고, 결과를 JSON, SARIF 2.1.0, 단일 HTML 보고서로 저장하는 Node.js CLI입니다. Node.js 22 이상과 내장 모듈만 사용합니다.
 
@@ -101,11 +101,28 @@ node scripts/live-verify-five.mjs --config /absolute/ai-tools.config.json --out 
 node bin/sec-hub.mjs scan /path/to/repository --ai --tools cloudflare,anthropic --config /absolute/seven-tools.config.json --timeout 1200 --out /absolute/new-native-run
 ```
 
-`agentOptions`는 allowlist입니다. 공통 옵션은 `skillRoot`와 `workRoot` (절대 경로), `revision` (공식 pin 40자리 SHA), `model`입니다. Cloudflare는 `effort` (`low|medium|high|xhigh`), `profile: "quick"`, `maxAgents` (7 이상, 기본 10)을 지원합니다. Anthropic은 `maxTurns` (양의 정수, 기본 30), `maxBudgetUsd` (유한한 양수, 기본 3), `mode: "vuln-scan"`, `single: true`, `noScore: true`를 지원합니다. 임의 prompt, patch 설정, 비밀값 설정 및 알 수 없는 옵션은 거부합니다. `command`와 `args`는 기존과 같이 실행 파일과 argv 접두사입니다. upstream CLI의 로그인 상태를 사용하며 Sec Hub는 credential 파일을 읽거나 도구를 설치하지 않습니다.
+`agentOptions`는 allowlist입니다. 공통 옵션은 `skillRoot`와 `workRoot` (절대 경로), `revision` (공식 pin 40자리 SHA), `model`입니다. Cloudflare는 `strategy` (`native-collab|supervised-codex-workers`, 생략 시 기존 `native-collab`), `effort` (`low|medium|high|xhigh`), `profile: "quick"`, `maxAgents` (기본 10; `native-collab`은 7 이상, `supervised-codex-workers`는 실행 전 최소 8 필요: recon 4 + planner 1 + hunter 1 + critic 1 + verifier 예약 1)을 지원합니다. Anthropic은 `maxTurns` (양의 정수, 기본 30), `maxBudgetUsd` (유한한 양수, 기본 3), `mode: "vuln-scan"`, `single: true`, `noScore: true`를 지원합니다. 임의 prompt, patch 설정, 비밀값 설정 및 알 수 없는 옵션은 거부합니다. `command`와 `args`는 기존과 같이 실행 파일과 argv 접두사입니다. upstream CLI의 로그인 상태를 사용하며 Sec Hub는 credential 파일을 읽거나 도구를 설치하지 않습니다.
 
-Cloudflare는 pin `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`의 공식 security-audit skill을 Codex CLI로 실행합니다. quick profile의 정적 소스 검토이며 동적 exploit 확인을 주장하지 않습니다. 필수 workflow 단계, 공식 validator 두 개, native 위임 증거와 출력물을 확인한 경우에만 완료입니다. Anthropic은 pin `d3bea6b5793b5f3d59a75ebe69a58efa88383145`의 공식 Claude Code `/vuln-scan --single --no-score`를 실행합니다. 정적 candidate 검토이며 C/C++ Docker/gVisor/ASAN reference harness 실행과는 범위가 다릅니다. 두 workflow는 trusted runner의 새 소스 사본을 사용하고 원본과 사본의 입력 소스 보존, native 완료 증거 및 결과 schema를 검증합니다. 입력 수정이나 불완전 증거는 완료로 표시하지 않습니다.
+Cloudflare는 pin `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`의 agent-neutral security-audit skill을 Codex CLI로 실행합니다. 기존 `native-collab`은 실제 native spawn/wait 증거를 요구합니다. 명시적으로 선택하는 `supervised-codex-workers`는 trusted supervisor가 서로 독립적인 read-only Codex 프로세스를 실행하고, 4개 recon·planner·hunter wave·최종 critic·fresh verifier 및 공식 validator 증거를 검증하는 Sec Hub의 적용 방식입니다. 이 방식을 Cloudflare의 공식 Codex 통합이나 실제 실행 검증 완료로 주장하지 않습니다. quick profile의 정적 소스 검토이며 동적 exploit 확인을 주장하지 않습니다. 필수 workflow 단계, 공식 validator 두 개, 선택한 strategy의 실제 프로세스·역할 독립성 증거와 출력물을 확인한 경우에만 완료입니다. Anthropic은 pin `d3bea6b5793b5f3d59a75ebe69a58efa88383145`의 공식 Claude Code `/vuln-scan --single --no-score`를 실행합니다. 정적 candidate 검토이며 C/C++ Docker/gVisor/ASAN reference harness 실행과는 범위가 다릅니다. 두 workflow는 trusted runner의 새 소스 사본을 사용하고 원본과 사본의 입력 소스 보존, native 완료 증거 및 결과 schema를 검증합니다. 입력 수정이나 불완전 증거는 완료로 표시하지 않습니다.
+
+`supervised-codex-workers`의 model-authored grouped exclusion catalog는 알려진 ID와 unit reference를 포함하며, 기존 full coverage 의미 검증과 hunter map에 그대로 확장한 뒤 검사합니다. source-only/known-fixture 정책은 계속 적용되고 의미 검증을 줄이지 않습니다. Recon 단계의 Codex `--output-schema` canary는 provider가 structured output schema를 받는지 확인할 뿐, source 검사나 전체 workflow 증거가 아닙니다. 각 role에는 별도 schema가 적용되며 recon canary 결과를 다른 role에 일반화하지 않습니다. malformed native JSON은 거부하며 문법을 자동 수정하지 않습니다. source claim을 만들어 내거나 자동 복구하지 않습니다. planner 제한은 최대 600초, 다른 역할은 최대 300초이며 전체 실행은 호출자의 남은 deadline과 최대 1800초에 묶입니다. `maxAgents` 최소 8은 역할 예약 조건이지 충분한 실행 예산의 보장은 아닙니다. 기본 최대 10은 이 작업에 명시적으로 높여야 할 수 있습니다. policy gate는 streamed text를 읽은 뒤 금지된 외부 SKILL 내용이나 정체 상태를 조기에 감지하지만, 파일시스템 접근을 예방하는 격리는 아닙니다. 이 실행은 vendor-certified가 아니며 source-only quick coverage입니다.
 
 JSON, HTML 및 SARIF의 tool execution 기록에는 mode, backend, source pin, 정적 검토 한계와 동적 검증 상태가 포함됩니다. 서로 다른 실행을 결합한 보고서는 aggregate 출처와 원본 실행 이력을 보존하며 단일 실행으로 표시하지 않습니다. 기존 다섯 CLI 결과와 두 새 workflow의 일곱 도구 검증 방법 및 실제 완료 여부는 새 검증 기록을 확인하세요.
+
+보존된 다섯 CLI aggregate와 새 native 실행을 재검증해 결합하려면 아래 명령을 사용합니다. `--agents`는 반복할 수 있어 Cloudflare와 Anthropic을 서로 다른 실행 폴더에서 받을 수 있습니다. 모든 입력은 절대 경로여야 하며 `--out`은 새 외부 폴더여야 합니다. 각 agent 입력은 선택한 도구가 실제 완료된 원본 로컬 실행이어야 하고, 같은 도구의 중복 완료나 실패 실행은 허용하지 않습니다. helper는 대상 해시·출처·최종 redaction 이후 해시·native 실행 증거를 다시 검증합니다.
+
+```sh
+node scripts/verify-seven-tools.mjs --five /absolute/five-combined --agents /absolute/cloudflare-completed --agents /absolute/anthropic-completed --config /absolute/seven-tools.config.json --out /absolute/new-seven-verified
+```
+
+Anthropic 대기 중에는 실제 완료 증거가 있는 Cloudflare 실행만 다음처럼 결합할 수 있습니다. 이 명령은 사용 예시이며 현재 Cloudflare 완료를 뜻하지 않습니다.
+
+```sh
+node scripts/verify-seven-tools.mjs --five /absolute/five-combined --agents /absolute/cloudflare-completed --config /absolute/seven-tools.config.json --out /absolute/new-six-partial --allow-partial
+```
+
+`--allow-partial`은 누락된 agent를 완료로 바꾸지 않습니다. 위 여섯 도구의 증거가 모두 검증되면 결과는 `verifiedIntegrations: 6`, `status: "partial"`, `verificationPassed: false`, `pendingIntegrations: ["anthropic"]`이며 종료 코드는 **2**입니다. 일곱 도구 완료로 표시하지 않습니다. 이 옵션을 생략하면 두 agent의 완료 증거가 모두 필요하며, 일곱 도구가 전부 검증되어야 `verificationPassed: true`와 종료 코드 0을 반환합니다.
+
 
 ## 결과 해석
 

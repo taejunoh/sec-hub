@@ -25,7 +25,9 @@ async function run(command,args,{cwd,env,prompt='',artifactDir,label='native',on
 }
 async function main(){
   const cfg=JSON.parse(process.argv[2]);if(!['cloudflare','anthropic'].includes(cfg.id)||typeof cfg.command!=='string'||!Array.isArray(cfg.args)||cfg.args.some(x=>typeof x!=='string'))throw new Error('Invalid native wrapper input');
-  const options=nativeOptions(cfg.id,validateAgentOptions(cfg.id,cfg.agentOptions)),instructions=await verifySourcePin(cfg.id,options);
+  const options=nativeOptions(cfg.id,validateAgentOptions(cfg.id,cfg.agentOptions));
+  if(cfg.id==='cloudflare'&&options.strategy==='supervised-codex-workers')return (await import('./supervised-cloudflare.mjs')).runSupervisedCloudflare({...cfg,agentOptions:options});
+  const instructions=await verifySourcePin(cfg.id,options);
   if(inside(cfg.target,options.workRoot)||inside(cfg.artifactDir,options.workRoot)||inside(cfg.target,cfg.artifactDir))throw new Error('Native work/output directories must be outside source target');
   const inputs=await sourceManifest(cfg.target);if(!inputs.length)throw new Error('Empty source target');
   await ensureSafeDirectory(cfg.artifactDir);await ensureSafeDirectory(options.workRoot);
@@ -33,7 +35,7 @@ async function main(){
   if(inside(cfg.artifactDir,stage)||inside(cfg.target,stage))throw new Error('Execution source staging must be outside target and raw artifacts');
   const copy=join(stage,'target'),runner=join(stage,'runner'),output=join(runner,'audit');await mkdir(runner,{mode:0o700});await mkdir(output,{mode:0o700});
   let copyBefore;try{await copySources(cfg.target,copy,inputs);copyBefore=await sourceManifest(copy);}catch(error){await rm(stage,{recursive:true,force:true});throw error;}
-  const manifest={schema:'sec-hub.native-agent/v1',id:cfg.id,source:SOURCES[cfg.id],sourceCommit:PINS[cfg.id],nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,instructions,model:options.model,backend:cfg.id==='cloudflare'?'codex':'claude',mode:cfg.id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',target:resolve(cfg.target),copyTarget:copy,inputs,copyBefore,startedAt:new Date().toISOString(),status:'incomplete',reasons:[],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
+  const manifest={schema:'sec-hub.native-agent/v1',id:cfg.id,source:SOURCES[cfg.id],sourceCommit:PINS[cfg.id],nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,instructions,model:options.model,backend:cfg.id==='cloudflare'?'codex':'claude',...(cfg.id==='cloudflare'?{strategy:options.strategy}:{}),mode:cfg.id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',target:resolve(cfg.target),copyTarget:copy,inputs,copyBefore,startedAt:new Date().toISOString(),status:'incomplete',reasons:[],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
   try{
     let args,cwd,prompt='';
     if(cfg.id==='cloudflare'){
@@ -50,7 +52,7 @@ async function main(){
     const result=await run(cfg.command,[...cfg.args,...args],{cwd,env,prompt,artifactDir:cfg.artifactDir,onEvent});
     for(const file of ['native-events.jsonl','native-stderr.log'])manifest.preRedactionHashes[file]=sha256(await safeRead(join(cfg.artifactDir,file)));
     manifest.process={exitCode:result.exitCode,interrupted:result.interrupted,outputLimitExceeded:result.outputLimitExceeded};
-    const events=result.stdout.split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));manifest.nativeEvidence=inspectNativeEvents(cfg.id,events,{...options,copyTarget:copy});manifest.reasons.push(...manifest.nativeEvidence.reasons);
+    const events=result.stdout.split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));manifest.nativeEvidence=inspectNativeEvents(cfg.id,events,{...options,copyTarget:copy,exitCode:result.exitCode});manifest.reasons.push(...manifest.nativeEvidence.reasons);
     if(result.exitCode!==0||interrupted||result.outputLimitExceeded)manifest.reasons.push('Native process did not succeed');
     for(const file of OUTPUTS[cfg.id]){
       try{const data=await safeRead(join(cfg.id==='cloudflare'?output:copy,file),5*1024*1024);await writeFile(join(cfg.artifactDir,file),data,{flag:'wx',mode:0o600});manifest.preRedactionHashes[file]=sha256(data);}catch{manifest.reasons.push(`Missing or unsafe native output: ${file}`);}

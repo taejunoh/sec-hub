@@ -1,6 +1,8 @@
 import { constants } from 'node:fs';
 import { open, readdir, lstat, mkdir, writeFile } from 'node:fs/promises';
 import { join, relative, resolve, isAbsolute } from 'node:path';
+import { inspectTerminalOutcome } from './native-errors.mjs';
+import { validateAgentOptions } from '../config.mjs';
 import { codexArgs,claudeArgs,cloudflarePrompt } from './invocation.mjs';
 import { atomicWriteFile } from '../safe-io.mjs';
 import { createHash } from 'node:crypto';
@@ -13,7 +15,7 @@ export const PINS={cloudflare:'c1c8a8c1471069fb0e188eeaff69b8e8db6564a8',anthrop
 export const SOURCES={cloudflare:'https://github.com/cloudflare/security-audit-skill',anthropic:'https://github.com/anthropics/defending-code-reference-harness'};
 export const OUTPUTS={cloudflare:['run-metadata.json','architecture.md','coverage-ledger.json','findings.json','REPORT.md','FINDINGS-DETAIL.md','NEEDS-VALIDATION.md'],anthropic:['VULN-FINDINGS.json','VULN-FINDINGS.md']};
 export function nativeOptions(id,value){
-  const options={...(id==='cloudflare'?{effort:'medium',profile:'quick',maxAgents:10}:{maxTurns:30,maxBudgetUsd:3,mode:'vuln-scan',single:true,noScore:true}),...value};
+  const options={...(id==='cloudflare'?{strategy:'native-collab',effort:'medium',profile:'quick',maxAgents:10}:{maxTurns:30,maxBudgetUsd:3,mode:'vuln-scan',single:true,noScore:true}),...value};
   if(!['skillRoot','workRoot','revision','model'].every(k=>typeof options[k]==='string'&&options[k].trim()))throw new Error(`${id}: required native agent configuration is missing`);
   return options;
 }
@@ -45,18 +47,16 @@ export async function copySources(source,destination,records){
 }
 export function sameInputs(a,b){return JSON.stringify(a)===JSON.stringify(b);}
 
-function terminalFailureReason(id,events){
-  const messages=id==='cloudflare'?events.filter(e=>e.type==='error'||e.type==='turn.failed').map(e=>e.message??e.error?.message??''):events.filter(e=>e.type==='result'&&(e.is_error===true||e.subtype!=='success')).map(e=>e.result??e.subtype??'');
-  if(!messages.length)return null;
-  // Classify native failures without echoing backend-supplied account identifiers or tokens.
-  const combined=messages.join(' ');
-  if(id==='cloudflare'&&/model_not_found|model.{0,120}not supported.{0,120}ChatGPT/i.test(combined))return 'Configured native Codex model is not supported with the current CLI and ChatGPT sign-in.';
-  if(id==='anthropic'&&/OAuth session expired.*(?:refresh|refreshed)/i.test(combined))return 'Native Claude OAuth session expired and could not be refreshed; complete native Claude sign-in before retrying.';
-  if(id==='anthropic'&&/error_max_turns|error_max_budget_usd/.test(combined))return 'Native Claude stopped at its turn or budget limit.';
-  return `Native ${id==='cloudflare'?'Codex':'Claude'} reported a terminal error; inspect retained native events.`;
+function terminalFailureReason(id,outcome){
+  if(outcome.ok)return null;
+  // Classification is centralized; these safe provider-specific messages preserve
+  // existing diagnostics without copying untrusted backend text or account data.
+  if(id==='cloudflare'&&outcome.category==='model_unavailable')return 'Configured native Codex model is not supported with the current CLI and ChatGPT sign-in.';
+  if(id==='anthropic'&&outcome.category==='auth_expired')return 'Native Claude OAuth session expired and could not be refreshed; complete native Claude sign-in before retrying.';
+  return outcome.reason;
 }
 export function inspectNativeEvents(id,events,options={}){
-  const terminalReason=terminalFailureReason(id,events),reasons=terminalReason?[terminalReason]:[];
+  const terminalOutcome=inspectTerminalOutcome(id,events,options.exitCode),terminalReason=terminalFailureReason(id,terminalOutcome),reasons=terminalReason?[terminalReason]:[];
   if(id==='cloudflare'){
     const completed=events.filter(e=>e.type==='item.completed').map(e=>e.item).filter(Boolean);
     const instructionRead=completed.some(i=>i.type==='command_execution'&&i.status==='completed'&&i.exit_code===0&&/(?:cat|sed|head|read_file)/.test(i.command??'')&&(i.command??'').includes('SKILL.md')&&((i.command??'').includes(options.skillRoot??'__no-root__')||(i.command??'').includes('.agents/skills/security-audit/SKILL.md')));
@@ -76,7 +76,7 @@ export function inspectNativeEvents(id,events,options={}){
     if(groups.recon.length!==4||groups.critic.length!==1)reasons.push('Expected exactly four baseline recon agents and one final critic');
     const phases=['recon','hunter','critic','verifier'];
     for(let i=1;i<phases.length;i++){const previous=groups[phases[i-1]],next=groups[phases[i]];if(previous.length&&next.length){const finish=Math.max(...previous.flatMap(x=>(x.receiver_thread_ids??[]).map(completedAt)));if(next.some(x=>at(x)<=finish))reasons.push(`Native phase order failed before ${phases[i]}`);}}
-    return {complete:!reasons.length,reasons,terminalReason,roles,spawnCount:ids.length,completedAgentIds:[...states],phaseOrder:phases,instructionRead,verifierThreadIds:roles.verifier};
+    return {complete:!reasons.length,reasons,terminalReason,terminalOutcome,roles,spawnCount:ids.length,completedAgentIds:[...states],phaseOrder:phases,instructionRead,verifierThreadIds:roles.verifier};
   }
   const content=events.flatMap(e=>e.message?.content??[]);
   const activations=content.filter(c=>c.type==='tool_use'&&c.name==='Skill'&&['vuln-scan','/vuln-scan'].includes(c.input?.skill));
@@ -86,7 +86,7 @@ export function inspectNativeEvents(id,events,options={}){
   const results=events.filter(e=>e.type==='result'),last=results.at(-1);
   if(!last||last.subtype!=='success'||last.is_error!==false||results.some(e=>e.is_error===true||e.subtype!=='success'))reasons.push('Native Claude terminal result did not succeed');
   if(results.some(e=>Array.isArray(e.permission_denials)&&e.permission_denials.length))reasons.push('Native Claude permission denial');
-  return {complete:!reasons.length,reasons,terminalReason,skillActivationIds:loaded.map(x=>x.id),terminalSubtype:last?.subtype??null};
+  return {complete:!reasons.length,reasons,terminalReason,terminalOutcome,skillActivationIds:loaded.map(x=>x.id),terminalSubtype:last?.subtype??null};
 }
 
 function canonical(value){if(Array.isArray(value))return value.map(canonical);if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])]));return value;}
@@ -132,6 +132,8 @@ export async function runOfficialValidators(options,artifactDir){
   }return results;
 }
 export async function finalizeNativeExecution(id,ctx){
+  const options=nativeOptions(id,validateAgentOptions(id,ctx.config?.tools?.[id]?.agentOptions));
+  if(id==='cloudflare'&&options.strategy==='supervised-codex-workers')return (await import('./supervised-validation.mjs')).finalizeSupervisedCloudflare(ctx);
   const key=resolve(ctx.artifactDir),expected=prevalidated.get(key);
   if(!expected)throw new Error('Native execution was not validated before redaction');
   const manifestFile=join(ctx.artifactDir,'execution-manifest.json');
@@ -144,10 +146,12 @@ export async function finalizeNativeExecution(id,ctx){
 }
 export async function validateNativeExecution(id,ctx){
   const configured=ctx.config?.tools?.[id]?.agentOptions;if(!configured)throw new Error(`${id}: explicit native agent configuration required`);
-  const options=nativeOptions(id,configured);
+  const options=nativeOptions(id,validateAgentOptions(id,configured));
+  if(id==='cloudflare'&&options.strategy==='supervised-codex-workers')return (await import('./supervised-validation.mjs')).validateSupervisedCloudflare(ctx);
   const manifestBytes=await safeRead(join(ctx.artifactDir,'execution-manifest.json'));
   const manifest=JSON.parse(manifestBytes.toString());
   if(manifest.schema!=='sec-hub.native-agent/v1'||manifest.id!==id||manifest.sourceCommit!==PINS[id]||manifest.source!==SOURCES[id]||resolve(manifest.target??'')!==resolve(ctx.target)||!Array.isArray(manifest.inputs)||!manifest.inputs.length)throw new Error(`${id}: invalid trusted execution manifest`);
+  if(id==='cloudflare'&&(manifest.strategy??'native-collab')!==options.strategy)throw new Error('cloudflare: native execution strategy differs');
   if(manifest.model!==options.model||manifest.backend!==(id==='cloudflare'?'codex':'claude')||manifest.mode!==(id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan')||!text(manifest.backendVersion)||manifest.invocation?.command!==ctx.config.tools[id].command||!Array.isArray(manifest.invocation.args)||!sameInputs(manifest.invocation.args.slice(0,(ctx.config.tools[id].args??[]).length),ctx.config.tools[id].args??[]))throw new Error(`${id}: native backend configuration differs`);
   if(!text(manifest.nativeNodeExecutable)||!isAbsolute(manifest.nativeNodeExecutable)||/[\x00-\x1f\x7f]/.test(manifest.nativeNodeExecutable)||!/^\d+\.\d+\.\d+/.test(manifest.nativeNodeVersion??'')||Number.parseInt(manifest.nativeNodeVersion)<22)throw new Error(`${id}: missing or invalid native Node runtime evidence`);
   const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs);
@@ -155,7 +159,7 @@ export async function validateNativeExecution(id,ctx){
   const instructions=await verifySourcePin(id,options);if(!sameInputs(instructions,manifest.instructions))throw new Error(`${id}: official instruction hashes differ`);
   const current=await sourceManifest(ctx.target);if(!sameInputs(current,manifest.inputs)||!sameInputs(manifest.inputs,manifest.copyBefore)||!sameInputs(manifest.inputs,manifest.copyAfter)||!sameInputs(manifest.inputs,manifest.originalAfter))throw new Error(`${id}: source preservation failed`);
   const events=(await safeRead(join(ctx.artifactDir,'native-events.jsonl'))).toString().split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));
-  const native=inspectNativeEvents(id,events,{...options,copyTarget:manifest.copyTarget});const retainedHashes={};
+  const native=inspectNativeEvents(id,events,{...options,copyTarget:manifest.copyTarget,exitCode:manifest.process?.exitCode});const retainedHashes={};
   const missing=[];
   for(const file of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log']){try{const data=await safeRead(join(ctx.artifactDir,file));retainedHashes[file]=sha256(data);}catch{missing.push(file);}}
   if(missing.length){
@@ -174,6 +178,6 @@ export async function validateNativeExecution(id,ctx){
   }else findings=parseAnthropicDocument(JSON.parse((await safeRead(join(ctx.artifactDir,'VULN-FINDINGS.json'))).toString()),{copyTarget:manifest.copyTarget,inputs:manifest.inputs,artifactDir:ctx.artifactDir});
   if(ctx.exitCode!==0||manifest.process?.exitCode!==0||manifest.process?.interrupted||manifest.process?.outputLimitExceeded)reasons.push('Native process did not exit successfully');
   if(manifest.status!=='complete')reasons.push(...(manifest.reasons??['Wrapper marked execution incomplete']));
-  const execution={mode:id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',backend:id==='cloudflare'?'codex':'claude',sourceCommit:PINS[id],source:SOURCES[id],model:manifest.model,backendVersion:manifest.backendVersion,manifestPath:join(ctx.artifactDir,'execution-manifest.json'),dynamicVerification:'not-performed',limitations:id==='cloudflare'?['Source-only; target execution was not authorized.','Quick profile is partial coverage.']:['Static source candidates only; C/C++ Docker/gVisor/ASAN pipeline was not executed.'],nativeEvidence:native,validators,retainedHashes,hashScope:'retained bytes after redaction',sourcePreserved:true};
+  const execution={mode:id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',backend:id==='cloudflare'?'codex':'claude',...(id==='cloudflare'?{strategy:options.strategy}:{}),sourceCommit:PINS[id],source:SOURCES[id],model:manifest.model,backendVersion:manifest.backendVersion,manifestPath:join(ctx.artifactDir,'execution-manifest.json'),dynamicVerification:'not-performed',limitations:id==='cloudflare'?['Source-only; target execution was not authorized.','Quick profile is partial coverage.']:['Static source candidates only; C/C++ Docker/gVisor/ASAN pipeline was not executed.'],nativeEvidence:native,validators,retainedHashes,hashScope:'retained bytes after redaction',sourcePreserved:true};
   if(reasons.length){const error=new Error(`${id}: native workflow incomplete: ${[...new Set(reasons)].join('; ')}`);error.findings=findings;error.execution=execution;throw error;}if(!manifest.finalRetainedHashes)prevalidated.set(resolve(ctx.artifactDir),sha256(manifestBytes));return {findings,execution};
 }

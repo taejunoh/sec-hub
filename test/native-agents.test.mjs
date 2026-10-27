@@ -97,3 +97,22 @@ test('native policy revalidation binds the recorded Node runtime rather than ver
   const args=codexArgs('/runner',{model:'gpt-6.1-sol'},'/recorded/runtime/bin/node');
   assert.ok(args.includes('shell_environment_policy.set={ PATH = "/recorded/runtime/bin:/usr/bin:/bin:/usr/sbin:/sbin" }'));
 });
+
+test('Cloudflare strategy is explicit, defaults to legacy, and rejects unknown backend settings',async()=>{
+  const {validateAgentOptions}=await import('../src/config.mjs');
+  const {nativeOptions}=await import('../src/agents/validation.mjs');
+  const base={skillRoot:'/skill',workRoot:'/work',revision:'c1c8a8c1471069fb0e188eeaff69b8e8db6564a8',model:'gpt-6.1-sol'};
+  assert.equal(nativeOptions('cloudflare',base).strategy,'native-collab');
+  assert.equal(validateAgentOptions('cloudflare',{...base,strategy:'supervised-codex-workers'}).strategy,'supervised-codex-workers');
+  for(const invalid of [{strategy:'fake-collab'},{backend:'fake'},{mode:'supervised'}])assert.throws(()=>validateAgentOptions('cloudflare',{...base,...invalid}),/Invalid config/);
+  assert.throws(()=>validateAgentOptions('anthropic',{strategy:'supervised-codex-workers'}),/Invalid config/);
+});
+test('native backend quota diagnosis takes precedence over missing workflow evidence',()=>{
+  const events=[{type:'assistant',is_api_error_message:true,error:{status:429,type:'usage_limit_reached',message:'weekly quota exhausted',reset_at:'2026-10-29T00:00:00Z'}},{type:'result',subtype:'success',is_error:true,result:'usage_limit_reached'}];
+  const result=inspectNativeEvents('anthropic',events,{exitCode:1});
+  assert.equal(result.complete,false);
+  assert.equal(result.terminalOutcome.category,'usage_limit');
+  assert.equal(result.terminalOutcome.statusCode,429);
+  assert.match(result.terminalReason,/usage allowance/i);
+  assert.doesNotMatch(result.terminalReason,/OAuth|sign-in/i);
+});

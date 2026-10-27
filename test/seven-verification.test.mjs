@@ -4,14 +4,17 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/pr
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { getAdapter } from '../src/adapters/index.mjs';
 import { normalizeFindings, writeReports } from '../src/reports.mjs';
 import { combineVerifiedRuns } from '../scripts/combine-verified-runs.mjs';
-import { verifySevenRuns, validateAgentRunMetadata, canonicalFiveAggregate, cleanVerificationValue } from '../scripts/verify-seven-tools.mjs';
+import { verifySevenRuns, validateAgentRunMetadata, validateAgentCohorts, canonicalFiveAggregate, cleanVerificationValue } from '../scripts/verify-seven-tools.mjs';
 
 const legacyIds = ['osv', 'skillspector', 'codex-security', 'open-code-review', 'php2shell'];
 const ids = [...legacyIds, 'cloudflare', 'anthropic'];
 const hash = value => createHash('sha256').update(value).digest('hex');
+const execute = promisify(execFile);
 async function hashes(directory, prefix = '') {
   const result = {};
   for (const entry of await readdir(path.join(directory, prefix), { withFileTypes: true })) {
@@ -21,8 +24,8 @@ async function hashes(directory, prefix = '') {
   }
   return result;
 }
-function agentRun(target) {
-  return { schemaVersion: 1, id: 'agent-id', startedAt: '2026-10-27T00:04:00.000Z', endedAt: '2026-10-27T00:05:00.000Z', target, status: 'completed', findings: [], tools: ids.map(id => ({ id, selected: !legacyIds.includes(id), status: legacyIds.includes(id) ? 'skipped' : 'completed', findings: [], ...(!legacyIds.includes(id) ? { version: 'native 1.0', startedAt: '2026-10-27T00:04:00.000Z', endedAt: '2026-10-27T00:05:00.000Z', exitCode: 0 } : {}) })) };
+function agentRun(target, selected = ['cloudflare', 'anthropic']) {
+  return { schemaVersion: 1, id: 'agent-id', startedAt: '2026-10-27T00:04:00.000Z', endedAt: '2026-10-27T00:05:00.000Z', target, status: 'completed', findings: [], tools: ids.map(id => ({ id, selected: selected.includes(id), status: selected.includes(id) ? 'completed' : 'skipped', findings: [], ...(selected.includes(id) ? { version: 'native 1.0', startedAt: '2026-10-27T00:04:00.000Z', endedAt: '2026-10-27T00:05:00.000Z', exitCode: 0 } : {}) })) };
 }
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), 'seven-verification-test-'));
@@ -79,6 +82,55 @@ test('agent metadata supports two completed zero-finding workflows without count
     if (mutation === 'version') delete run.tools.at(-1).version;
     assert.throws(() => validateAgentRunMetadata(run, five), undefined, mutation);
   }
+});
+
+test('disjoint native cohorts cover seven while explicit partial progress leaves exactly one pending', () => {
+  const target = { path: '/target', revision: 'a'.repeat(40), dirty: false }, five = { id: 'five', target, endedAt: '2026-10-27T00:03:00.000Z' };
+  const cloudflare = agentRun(structuredClone(target), ['cloudflare']), anthropic = { ...agentRun(structuredClone(target), ['anthropic']), id: 'anthropic-id' };
+  assert.doesNotThrow(() => validateAgentRunMetadata(cloudflare, five));
+  assert.throws(() => validateAgentCohorts([cloudflare], five), /missing.*anthropic/i);
+  assert.deepEqual(validateAgentCohorts([cloudflare], five, { allowPartial: true }), { completedIds: ['cloudflare'], missingIds: ['anthropic'], verifiedIntegrations: 6, verificationPassed: false, status: 'partial' });
+  assert.deepEqual(validateAgentCohorts([cloudflare, anthropic], five), { completedIds: ['cloudflare', 'anthropic'], missingIds: [], verifiedIntegrations: 7, verificationPassed: true, status: 'completed' });
+  assert.throws(() => validateAgentCohorts([cloudflare, { ...structuredClone(cloudflare), id: 'other-id' }], five, { allowPartial: true }), /duplicate.*cloudflare/i);
+  assert.throws(() => validateAgentCohorts([cloudflare, { ...anthropic, id: cloudflare.id }], five), /run identit/i);
+  const crossTarget = structuredClone(anthropic); crossTarget.target.revision = 'b'.repeat(40);
+  assert.throws(() => validateAgentCohorts([cloudflare, crossTarget], five), /target/i);
+  assert.throws(() => validateAgentCohorts([], five, { allowPartial: true }), /at least one/i);
+  assert.throws(() => validateAgentCohorts([agentRun(target, [])], five, { allowPartial: true }), /select/i);
+  const fabricatedUnused = structuredClone(cloudflare); fabricatedUnused.tools.at(-1).version = 'never executed';
+  assert.throws(() => validateAgentCohorts([fabricatedUnused], five, { allowPartial: true }), /unused/i);
+});
+
+test('partial mode cannot promote fake native completion and default missing-native mode writes no report', async t => {
+  for (const allowPartial of [false, true]) {
+    const data = await fixture(t);
+    data.native = agentRun(data.legacy.target, ['cloudflare']);
+    const artifactDir = path.join(data.agents, 'raw/cloudflare');
+    data.native.tools.find(tool => tool.id === 'cloudflare').artifacts = { stdout: path.join(artifactDir, 'stdout.txt'), stderr: path.join(artifactDir, 'stderr.txt') };
+    await writeReports(data.native, data.agents);
+    await assert.rejects(verifySevenRuns({ ...data, agents: [data.agents], allowPartial }), allowPartial ? /manifest|native|configuration/i : /missing.*anthropic/i);
+    await assert.rejects(lstatOutput(data.out), /ENOENT/);
+  }
+});
+
+test('multiple public cohorts reject duplicate completions and cross-target cohorts before trusting native artifacts', async t => {
+  for (const mutation of ['duplicate', 'cross-target', 'imported', 'selected-cli']) {
+    const data = await fixture(t), second = path.join(data.root, 'second');
+    const first = agentRun(structuredClone(data.legacy.target), ['cloudflare']);
+    const later = { ...agentRun(structuredClone(data.legacy.target), mutation === 'duplicate' ? ['cloudflare'] : ['anthropic']), id: 'second-native-id' };
+    if (mutation === 'cross-target') later.target.path = path.join(data.root, 'another-target');
+    if (mutation === 'imported') later.tools.at(-1).status = 'imported';
+    if (mutation === 'selected-cli') { later.tools[0].selected = true; later.tools[0].status = 'completed'; }
+    await writeReports(first, data.agents); await writeReports(later, second);
+    await assert.rejects(verifySevenRuns({ ...data, agents: [data.agents, second], allowPartial: true }), /duplicate|target|agent/i, mutation);
+    await assert.rejects(lstatOutput(data.out), /ENOENT/);
+  }
+});
+
+test('CLI accepts repeatable agents and standalone allow-partial while rejecting duplicate cohorts with exit 2', async t => {
+  const data = await fixture(t);
+  await assert.rejects(execute(process.execPath, [new URL('../scripts/verify-seven-tools.mjs', import.meta.url).pathname, '--allow-partial', '--five', data.five, '--agents', data.agents, '--agents', data.agents, '--config', data.config, '--out', data.out]), error => error.code === 2 && /cohort paths must be unique/i.test(error.stderr));
+  await assert.rejects(lstatOutput(data.out), /ENOENT/);
 });
 
 test('five canonical comparison excludes only new output identity/time and relative links', () => {
