@@ -50,6 +50,35 @@ node bin/sec-hub.mjs report ./sec-hub-runs/RUN_ID
 node bin/sec-hub.mjs report ./sec-hub-runs/RUN_ID/run.json
 ```
 
+저장된 두 실행의 비교는 실행 중인 검사기나 인증 정보를 사용하지 않습니다. 각 입력은 이름과 관계없이 v1 저장 실행 JSON 파일이거나, `run.json`을 포함한 실행 디렉터리여야 합니다.
+
+```sh
+node bin/sec-hub.mjs compare ./baseline-run ./current-run
+node bin/sec-hub.mjs compare ./baseline-run/run.json ./current-run --fail-on critical --out ./comparison-report
+```
+
+비교 결과 전체가 stdout에 키 순서가 정해진 JSON으로 출력됩니다. `--out`을 주면 같은 비교를 `comparison.json`과 `comparison.html`로 새 디렉터리에 저장합니다. 출력 폴더는 비어 있어야 하며 입력 실행과 겹칠 수 없습니다. 파일 해시와 읽은 `run.json` 경로가 입력 출처로 포함됩니다. 진단은 stderr에 기록됩니다.
+
+`--fail-on` 기본값은 `high`이며 허용 값은 `critical`, `high`, `medium`, `low`, `info`, `any`, `none`입니다. 게이트는 새로 관측된 결과와 심각도가 올라간 결과만 평가합니다. 선택한 기준을 만족하는 새 결과가 있으면 종료 코드 1이고, 관련 `unknown` 심각도 또는 불완전한 비교 범위가 있으면 판단 불가인 2입니다. `any`는 심각도에 관계없이 새 결과를 차단하며, `none`은 finding 게이트를 끄지만 불완전한 범위의 종료 코드 2는 유지합니다. 모든 비교 항목을 JSON과 HTML에 포함합니다.
+
+`new`는 기준 실행에서 보이지 않았다는 뜻이지 코드에 새로 도입되었다는 증명은 아닙니다. `candidate`와 `reported` 출처도 그대로 유지하며 `confirmed`로 승격하지 않습니다. 비교 가능한 검사 범위에서 확인 가능한 결과가 현재 실행에 없으면 `resolved`로 분류합니다. 이는 패치나 수정 확인이 아닙니다. 해당 검사가 누락·실패·부분 범위이거나 identity가 너무 약해 결과의 부재를 판단할 수 없으면 `unobserved`로 표시하고 비교를 불완전하게 처리합니다. 기존 `existing` 고심각도 결과는 new-only 게이트를 통과하며, 낮은 심각도에서 높은 심각도로 바뀐 항목은 `regressed`로 평가합니다.
+
+두 실행은 같은 절대 대상 경로를 가리켜야 합니다. 저장된 revision이 다르면 각각 표시하며 비교를 허용합니다. 의존성 identity는 정확한 package/version과 주 식별자를 사용하므로 alias 변경은 새 결과와 사라진 결과로 나뉠 수 있습니다. fallback line identity는 줄 이동을 같은 취약점으로 추측하지 않으며 별도의 새 항목과 미관측 항목을 만들 수 있습니다. 중복 발생 수는 유지됩니다.
+
+CI 비교 게이트는 OSV 단독 실행을 기본 프로필로 사용할 수 있습니다. 대상 저장소 루트에 `SKILL.md`가 있는 경우에만 `skillspector`를 추가하세요. 완료된 OSV와 SkillSpector 검사는 대상 범위에 맞춰 비교할 수 있습니다. Cloudflare quick profile은 항상 부분 범위이며 PHP endpoint 범위도 이력만으로 확인할 수 없어, 두 경우 모두 비교 게이트는 종료 코드 2를 반환합니다. 선택하지 않은 도구, 실패한 검사, 가져온 데이터, 누락된 도구 또는 알려지지 않은 검사 계약도 완전한 범위로 간주하지 않습니다. 그러므로 6개 도구 aggregate와 7개 통합 중 Anthropic이 보류된 결과는 성공적인 새 7개 전체 게이트로 처리되지 않습니다.
+
+저장된 실행과 비교를 읽기 전용 로컬 대시보드에서 확인하려면 직접 선택한 실행 루트의 절대 경로를 지정합니다.
+
+```sh
+node bin/sec-hub.mjs serve --runs /absolute/path/to/sec-hub-runs
+```
+
+기본 포트 `0`은 운영체제가 사용 가능한 포트를 고르게 합니다. 출력된 `127.0.0.1` URL을 브라우저에서 직접 여세요. `--port`에는 기본값 외에 0–65535의 10진수 포트를 지정할 수 있습니다. 서버는 loopback에만 바인딩하며 브라우저는 같은 loopback origin으로만 API를 호출합니다. 인증은 제공하지 않으므로 공개 호스팅이나 신뢰할 수 없는 로컬 사용자로부터의 격리를 의미하지 않습니다.
+
+대시보드는 루트의 `run.json`, `comparison.json`과 바로 아래 각 실행 디렉터리의 같은 이름 파일만 시작 시 한 번 읽습니다. 하위 트리를 재귀 탐색하지 않고 `raw/`, 원본 소스 또는 저장된 경로를 따라가지 않습니다. 파일을 추가한 뒤에는 서버를 재시작해야 합니다. 디렉터리 항목 512개, artifact 128개, artifact당 JSON 20 MiB, 전체 입력 64 MiB 등 용량 제한에 걸리면 화면에 잘림 또는 제한 안내가 표시됩니다. 대시보드는 저장된 HTML 보고서를 제공하지 않습니다.
+
+실행 완료는 “안전 확인”이나 취약점 부재를 뜻하지 않습니다. 가져온 결과는 “가져온 결과 · 로컬 실행 아님”으로, 저장된 비교는 “저장된 비교 · 원본 검사 재검증 안 함”으로 표시합니다. 후보 결과를 확정 결과로 승격하지 않고, `resolved`도 수정 확인으로 표현하지 않습니다. 브라우저의 비교는 기존 비교 엔진을 메모리에서 실행하며 `comparison.json`이나 HTML 보고서를 쓰지 않습니다. 비교 게이트 0은 완전한 비교에서 선택한 기준을 통과, 1은 완전한 비교에서 위반, 2는 불완전하거나 판단할 수 없음을 나타냅니다. 게이트 결과는 응답 데이터이며 서버 종료 코드에는 영향을 주지 않습니다. Ctrl+C 또는 SIGTERM으로 서버를 종료합니다.
+
 브리지 가이드와 import 계약 내보내기, 결과 가져오기:
 
 ```sh
