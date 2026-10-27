@@ -24,3 +24,10 @@ test('verification log redaction preserves JSON while masking synthetic identity
   assert.equal(parsed.api_key, '[REDACTED_CREDENTIAL]');
   assert.doesNotMatch(result, /synthetic|person@example/);
 });
+
+test('verification log redaction masks opaque credentials in single-quoted and backtick formats', () => {
+  const source = "access_token='syntheticopaquevalue' {'api_key': 'syntheticopaquevalue'} `client_secret`=`syntheticopaquevalue`";
+  const result = cleanVerificationLog(source);
+  assert.equal(result, "access_token='[REDACTED_CREDENTIAL]' {'api_key': '[REDACTED_CREDENTIAL]'} `client_secret`=`[REDACTED_CREDENTIAL]`");
+  assert.doesNotMatch(result, /syntheticopaquevalue/);
+});

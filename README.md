@@ -18,7 +18,7 @@ node bin/sec-hub.mjs --help
 
 `npm install`은 런타임 의존성을 추가하지 않습니다. 전역 명령이 필요하면 선택적으로 `npm link`를 실행할 수 있습니다. 기본 사용은 `node bin/sec-hub.mjs`입니다.
 
-npm 패키지에는 CLI, 런타임, 스크립트, 예시와 README만 포함됩니다. 실행 증거는 저장소의 `verification/`에 남으며, tarball 생성은 0.2.0의 7개 도구 검증 완료를 뜻하지 않습니다.
+npm 패키지에는 CLI, 런타임, 예시와 README만 포함됩니다. 유지 관리 스크립트는 저장소 checkout에서만 사용할 수 있으며 설치 패키지에는 포함되지 않습니다. 실행 증거는 저장소의 `verification/`에 남으며, tarball 생성은 0.2.0의 7개 도구 검증 완료를 뜻하지 않습니다.
 
 ## 명령
 
@@ -116,7 +116,7 @@ Codex 옵션은 `auth` (`chatgpt`, `api-key`, `auto`), `model` (비어 있지 �
 
 OCR은 다음 파일의 예상 토큰을 예산에 미리 예약하므로 실제 사용량이 한도보다 낮아도 파일 검토를 건너뛸 수 있습니다. 이 합성 fixture에서는 20,000 토큰 예산이 `server.mjs` 배치를 막았으므로 예시는 40,000을 사용합니다. `budget_exceeded`나 검토 제한 경고가 있으면 finding이 0건이어도 완료로 처리하지 않습니다.
 
-인증된 다섯 CLI를 재검증하려면 upstream의 공식 로그인 명령으로 먼저 로그인하고, 설치 경로를 바꾼 명시적 설정과 새 절대 출력 경로를 전달합니다. 이 명령은 AI 서비스를 실제 호출합니다.
+아래 `scripts/` 유지 관리 명령은 저장소 checkout에서만 실행할 수 있습니다. 설치 패키지에는 `scripts/`와 해당 테스트 helper 및 fixture가 포함되지 않습니다. 인증된 다섯 CLI를 재검증하려면 upstream의 공식 로그인 명령으로 먼저 로그인하고, 설치 경로를 바꾼 명시적 설정과 새 절대 출력 경로를 전달합니다. 이 명령은 AI 서비스를 실제 호출합니다.
 
 ```sh
 node scripts/live-verify-five.mjs --config /absolute/ai-tools.config.json --out /absolute/new-verification-run

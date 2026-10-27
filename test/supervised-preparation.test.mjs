@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,rm,readdir,access,symlink} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
+import {buildRolePrompt,loadCloudflareContracts} from '../src/agents/cloudflare-prompts.mjs';
 import {preflightPreparationLocations} from '../src/agents/cloudflare-preparation.mjs';
 import {runSupervisedCloudflare} from '../src/agents/supervised-cloudflare.mjs';
 import {validateSupervisedCloudflare,finalizeSupervisedCloudflare} from '../src/agents/supervised-validation.mjs';
@@ -13,18 +14,27 @@ const json=x=>JSON.stringify(x,null,2)+'\n';
 test('preparation location preflight pins source before any mkdir and rejects old-run overlaps',async()=>{
   const root=await mkdtemp(join(tmpdir(),'cf-prep-path-'));try{const old=join(root,'old'),target=join(root,'target'),workRoot=join(root,'work'),out=join(root,'new'),source=join(old,'raw/cloudflare/execution-manifest.json');await mkdir(join(old,'raw/cloudflare'),{recursive:true});await mkdir(target);await writeFile(source,'{}');const options={preparationFrom:source,preparationSha256:sha256('{}'),target,workRoot,out};await preflightPreparationLocations(options);await assert.rejects(access(out));await assert.rejects(access(workRoot));for(const bad of [{preparationSha256:'0'.repeat(64)},{out:join(old,'nested')},{out:root},{workRoot:join(old,'stage')},{target:old}])await assert.rejects(preflightPreparationLocations({...options,...bad}),/hash|digest|overlap|disjoint|source|preparation/i);await symlink(old,join(root,'alias'));await assert.rejects(preflightPreparationLocations({...options,out:join(root,'alias/new')}),/link|overlap|preparation/i);}finally{await rm(root,{recursive:true,force:true});}
 });
-async function fixture(mode='zero'){
+async function fixture(mode='zero',{legacyPrompt=false}={}){
   const root=await mkdtemp(join(tmpdir(),'cf-prep-source-')),target=join(root,'target'),old=join(root,'source-run/raw/cloudflare'),artifactDir=join(root,'new-run/raw/cloudflare');await mkdir(target);await writeFile(join(target,'target.mjs'),'export const run = input => input;\n');
   const base={id:'cloudflare',command:process.execPath,args:[resolve('test/fixtures/supervised-fake-codex.mjs'),mode],target,agentOptions:{strategy:'supervised-codex-workers',skillRoot,workRoot:join(root,'staging'),revision:PINS.cloudflare,model:'gpt-6.1-sol',effort:'medium',profile:'quick',maxAgents:20}};
   assert.equal(await runSupervisedCloudflare({...base,artifactDir:old}),0);
   // Explicit FAKE historic host-constructor failure fixture: five real completed
   // fake CLI processes are retained; all downstream fixture evidence is removed.
   const sourcePath=join(old,'execution-manifest.json'),m=JSON.parse(await readFile(sourcePath,'utf8')),keep=m.roles.slice(0,5);for(const r of m.roles.slice(5))await rm(join(old,'roles',r.agentId),{recursive:true,force:true});m.roles=keep;m.roles[4].accepted=false;m.roles[4].failure=sortFailure;m.status='incomplete';m.reasons=[sortFailure];m.retainedFiles=m.retainedFiles.filter(f=>!f.startsWith('roles/')||keep.some(r=>f.startsWith(`roles/${r.agentId}/`)));const meta=JSON.parse(await readFile(join(old,'run-metadata.json'),'utf8'));meta.run_status='incomplete';meta.incomplete_reason=sortFailure;meta.budget.spent=5;await writeFile(join(old,'run-metadata.json'),json(meta));m.preRedactionHashes={};for(const f of m.retainedFiles)m.preRedactionHashes[f]=sha256(await safeRead(join(old,f)));await writeFile(sourcePath,json(m));
+  if(legacyPrompt){
+    delete m.promptVersion;const c=await loadCloudflareContracts(skillRoot),recon=[];
+    for(const role of m.roles){
+      const built=buildRolePrompt(c,{role:role.role,agentId:role.ownerId,target:m.copyTarget,runner:m.runner,...(role.role==='planner'?{recon}:{})},1),name=`roles/${role.agentId}/prompt.txt`;
+      await writeFile(join(old,name),built.prompt);role.promptSha256=sha256(built.prompt);role.promptBytes=Buffer.byteLength(built.prompt);m.preRedactionHashes[name]=role.promptSha256;
+      if(role.role.startsWith('recon-'))recon.push(JSON.parse(await readFile(join(old,`roles/${role.agentId}/response.json`),'utf8')));
+    }
+    await writeFile(sourcePath,json(m));
+  }
   const sourceBytes=await readFile(sourcePath),payload={...base,artifactDir,agentOptions:{...base.agentOptions,preparationFrom:sourcePath,preparationSha256:sha256(sourceBytes)}},ctx={target,artifactDir,exitCode:0,config:{tools:{cloudflare:{command:base.command,args:base.args,agentOptions:payload.agentOptions}}}};
   return {root,old,sourcePath,sourceBytes,payload,ctx,async read(name){return JSON.parse(await readFile(join(artifactDir,name),'utf8'));},async dispose(){await rm(root,{recursive:true,force:true});}};
 }
 test('preparation continuation reuses only five native proofs and charges them while fresh roles complete',{skip:!available},async()=>{
-  const f=await fixture();try{assert.equal(await runSupervisedCloudflare(f.payload),0);const m=await f.read('execution-manifest.json');assert.equal(m.roles.length,2);assert.deepEqual(m.roles.map(r=>r.role),['hunter','critic']);assert.equal(m.preparation.chargedAgents,5);assert.equal(m.preparation.sourceStatus,'incomplete');assert.equal((await f.read('run-metadata.json')).budget.spent,7);assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);await finalizeSupervisedCloudflare(f.ctx);assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);assert.deepEqual(await readFile(f.sourcePath),f.sourceBytes);}finally{await f.dispose();}
+  const f=await fixture();try{assert.equal(await runSupervisedCloudflare(f.payload),0);const m=await f.read('execution-manifest.json');assert.equal(m.roles.length,2);assert.deepEqual(m.roles.map(r=>r.role),['hunter','critic']);assert.equal(m.preparation.chargedAgents,5);assert.equal(m.preparation.sourcePromptVersion,2);assert.equal(m.preparation.sourceStatus,'incomplete');assert.equal((await f.read('run-metadata.json')).budget.spent,7);assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);await finalizeSupervisedCloudflare(f.ctx);assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);assert.deepEqual(await readFile(f.sourcePath),f.sourceBytes);}finally{await f.dispose();}
 });
 test('preparation continuation revalidates three distinct hunters from one frozen assignment wave',{skip:!available},async()=>{
   const f=await fixture('three-hunters');try{assert.equal(await runSupervisedCloudflare(f.payload),0);const m=await f.read('execution-manifest.json');assert.equal(m.roles.filter(r=>r.role==='hunter').length,3);assert.equal((await f.read('run-metadata.json')).budget.spent,9);assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);}finally{await f.dispose();}
@@ -37,4 +47,13 @@ test('preparation receipt and snapshot cannot be tampered or rebound after nativ
 });
 for(const scenario of ['snapshot-resealed','source-extra-file','new-thread-reuse','receipt-rebind','new-backend-version'])test(`preparation validation rejects ${scenario}`,{skip:!available},async()=>{
   const f=await fixture();try{assert.equal(await runSupervisedCloudflare(f.payload),0);const m=await f.read('execution-manifest.json');if(scenario==='snapshot-resealed'){const name=m.retainedFiles.find(p=>p.startsWith('preparation/source/roles/')&&p.endsWith('response.json')),bytes='{}';await writeFile(join(f.payload.artifactDir,name),bytes);m.preRedactionHashes[name]=sha256(bytes);}if(scenario==='source-extra-file')await writeFile(join(f.old,'unretained-extra.txt'),'changed source cohort\n');if(scenario==='receipt-rebind')m.preparation.sourceManifestPath=join(f.root,'different/raw/cloudflare/execution-manifest.json');if(scenario==='new-backend-version')m.backendVersion='changed-native-version';if(scenario==='new-thread-reuse'){const r=m.roles[0],name=`roles/${r.agentId}/events.jsonl`,events=(await readFile(join(f.payload.artifactDir,name),'utf8')).split('\n').filter(Boolean).map(JSON.parse);r.threadId=m.preparation.roles[0].threadId;events.find(e=>e.type==='thread.started').thread_id=r.threadId;const bytes=events.map(JSON.stringify).join('\n')+'\n';await writeFile(join(f.payload.artifactDir,name),bytes);m.preRedactionHashes[name]=sha256(bytes);}await writeFile(join(f.payload.artifactDir,'execution-manifest.json'),json(m));await assert.rejects(validateSupervisedCloudflare(f.ctx),/preparation|receipt|source|snapshot|thread|reus|differ/i);}finally{await f.dispose();}
+});
+
+test('legacy preparation keeps its exact receipt format while fresh continuation roles use v2',{skip:!available},async()=>{
+  const f=await fixture('zero',{legacyPrompt:true});try{
+    assert.equal(await runSupervisedCloudflare(f.payload),0);const m=await f.read('execution-manifest.json');
+    assert.equal(m.promptVersion,2);assert.equal(Object.hasOwn(m.preparation,'sourcePromptVersion'),false);
+    assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);
+    assert.deepEqual(await readFile(f.sourcePath),f.sourceBytes);
+  }finally{await f.dispose();}
 });

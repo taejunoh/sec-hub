@@ -3,7 +3,7 @@
 import { cp, mkdir, mkdtemp, readFile, lstat, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadConfig } from '../src/config.mjs';
 import { runProcess } from '../src/processes.mjs';
 import { cleanVerificationLog as clean } from './live-verify-redaction.mjs';
@@ -43,20 +43,24 @@ function changes(before, after) {
   return { added: Object.keys(after).filter(key => !Object.hasOwn(before, key)), removed: Object.keys(before).filter(key => !Object.hasOwn(after, key)), changed: Object.keys(before).filter(key => Object.hasOwn(after, key) && before[key] !== after[key]) };
 }
 
-async function main() {
-  const { config, out, runtime } = options(process.argv.slice(2));
+export async function runFiveToolVerification({
+  argv = process.argv.slice(2), processRef = process, loadConfigImpl = loadConfig,
+  runProcessImpl = runProcess, startFixtureImpl = startHeaderFixture,
+  ensureSafeDirectoryImpl = ensureSafeDirectory, atomicWriteFileImpl = atomicWriteFile,
+} = {}) {
+  const { config, out, runtime } = options(argv);
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('Node.js 22 or newer is required');
   await absent(out);
-  const configured = await loadConfig(config);
+  const configured = await loadConfigImpl(config);
   const cs = configured.tools['codex-security']?.scanOptions;
   const ocr = configured.tools['open-code-review']?.scanOptions;
   if (!cs?.auth || !cs?.model || !cs?.effort || !cs?.maxCost || !cs?.maxTimeMinutes || !ocr?.provider || !ocr?.model || !ocr?.maxTokensBudget || !ocr?.concurrency || !ocr?.timeoutMinutes) throw new Error('Explicit bounded scanOptions are required for both AI tools');
-  await ensureSafeDirectory(out);
+  await ensureSafeDirectoryImpl(out);
   const controller = new AbortController(), cancel = () => controller.abort();
-  process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
+  processRef.once('SIGINT', cancel); processRef.once('SIGTERM', cancel);
   const commands = [], evidence = { verificationPassed: false, startedAt: new Date().toISOString(), config, scanOptions: { 'codex-security': cs, 'open-code-review': ocr }, commands };
   const capture = async (name, command, args, accepted = [0], extra = {}) => {
-    const result = await runProcess({ command, args, successCodes: accepted }, { cwd: projectRoot, timeoutMs: 3_100_000, maxOutputBytes: 2 * 1024 * 1024, signal: controller.signal, ...extra });
+    const result = await runProcessImpl({ command, args, successCodes: accepted }, { cwd: projectRoot, timeoutMs: 3_100_000, maxOutputBytes: 2 * 1024 * 1024, signal: controller.signal, ...extra });
     const record = { name, command, args, ...result, stdout: clean(result.stdout), stderr: clean(result.stderr) };
     commands.push(record);
     return record;
@@ -75,7 +79,7 @@ async function main() {
     }
     before = await hashes(target);
     evidence.targetHashes = { before };
-    fixture = await startHeaderFixture();
+    fixture = await startFixtureImpl();
     evidence.fixtureUrl = fixture.url;
     const hub = path.join(projectRoot, 'bin/sec-hub.mjs');
     const doctor = await capture('doctor-all-tools', runtime, [hub, 'doctor', target, '--json', '--ai', '--config', config]);
@@ -96,21 +100,50 @@ async function main() {
   } catch (error) {
     evidence.error = clean(error.message);
   } finally {
-    if (target && before) {
-      const after = await hashes(target);
-      evidence.targetHashes.after = after;
-      evidence.targetChanges = changes(before, after);
-      if (evidence.targetChanges.changed.length || evidence.targetChanges.removed.length) { evidence.verificationPassed = false; evidence.error ??= 'Target source files changed during the scan'; }
+    const noteFailure = (label, error) => {
+      evidence.verificationPassed = false;
+      const message = clean(error?.message ?? String(error));
+      evidence.error ??= `${label}: ${message}`;
+      (evidence.finalizationErrors ??= []).push(`${label}: ${message}`);
+    };
+    const attempt = async (label, action) => {
+      try { await action(); }
+      catch (error) { noteFailure(label, error); }
+    };
+    try {
+      if (target && before) await attempt('Target hash collection failed', async () => {
+        const after = await hashes(target);
+        evidence.targetHashes.after = after;
+        evidence.targetChanges = changes(before, after);
+        if (evidence.targetChanges.changed.length || evidence.targetChanges.removed.length) {
+          evidence.verificationPassed = false;
+          evidence.error ??= 'Target source files changed during the scan';
+        }
+      });
+      await attempt('Fixture shutdown failed', async () => { await fixture?.close(); });
+      await attempt('Output directory preparation failed', async () => { await ensureSafeDirectoryImpl(out); });
+      await attempt('Output artifact hashing failed', async () => { evidence.artifactHashes = await hashes(out); });
+      evidence.endedAt = new Date().toISOString();
+      await attempt('Verification evidence write failed', async () => {
+        await atomicWriteFileImpl(path.join(out, 'verification-commands.json'), clean(JSON.stringify(evidence, null, 2)) + '\n', { mode: 0o600 });
+      });
+      await attempt('Verification summary write failed', async () => {
+        await atomicWriteFileImpl(path.join(out, 'LIVE-VERIFICATION.md'), `# Five-tool execution verification\n\n- Verification passed: ${evidence.verificationPassed}.\n- Runtime: ${evidence.runtime ?? 'not verified'}.\n- Controlled target: \`${target ?? 'not prepared'}\`. Source was never installed or executed.\n- Coverage: ${(evidence.tools ?? []).map(tool => `${tool.id}=${tool.status}`).join(', ') || 'scan not completed'}.\n- Native provider authentication remains in upstream login storage.\n- Target byte hashes exclude Git metadata; new native metadata is listed separately.\n- Target changes: ${JSON.stringify(evidence.targetChanges ?? {})}.\n- Native output and reports are retained, including on partial/failing runs.\n- Command results, scan options, versions, hashes and failures: [verification-commands.json](verification-commands.json).\n${evidence.error ? `- Failure: ${evidence.error}\n` : ''}${evidence.finalizationErrors?.length ? `- Finalization errors: ${evidence.finalizationErrors.join('; ')}\n` : ''}`, { mode: 0o600 });
+      });
+      if (evidence.finalizationErrors?.some(error => error.startsWith('Verification summary write failed:'))) {
+        // Refresh machine evidence after a summary-only failure when the output path still accepts writes.
+        await attempt('Verification evidence refresh failed', async () => {
+          await atomicWriteFileImpl(path.join(out, 'verification-commands.json'), clean(JSON.stringify(evidence, null, 2)) + '\n', { mode: 0o600 });
+        });
+      }
+    } finally {
+      processRef.removeListener('SIGINT', cancel);
+      processRef.removeListener('SIGTERM', cancel);
     }
-    await fixture?.close();
-    await ensureSafeDirectory(out);
-    evidence.artifactHashes = await hashes(out);
-    evidence.endedAt = new Date().toISOString();
-    await atomicWriteFile(path.join(out, 'verification-commands.json'), clean(JSON.stringify(evidence, null, 2)) + '\n', { mode: 0o600 });
-    await atomicWriteFile(path.join(out, 'LIVE-VERIFICATION.md'), `# Five-tool execution verification\n\n- Verification passed: ${evidence.verificationPassed}.\n- Runtime: ${evidence.runtime ?? 'not verified'}.\n- Controlled target: \`${target ?? 'not prepared'}\`. Source was never installed or executed.\n- Coverage: ${(evidence.tools ?? []).map(tool => `${tool.id}=${tool.status}`).join(', ') || 'scan not completed'}.\n- Native provider authentication remains in upstream login storage.\n- Target byte hashes exclude Git metadata; new native metadata is listed separately.\n- Target changes: ${JSON.stringify(evidence.targetChanges ?? {})}.\n- Native output and reports are retained, including on partial/failing runs.\n- Command results, scan options, versions, hashes and failures: [verification-commands.json](verification-commands.json).\n${evidence.error ? `- Failure: ${evidence.error}\n` : ''}`, { mode: 0o600 });
-    process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel);
   }
   console.log(JSON.stringify({ verificationPassed: evidence.verificationPassed, out, fixturePath: target, status: evidence.runStatus, tools: evidence.tools, error: evidence.error }, null, 2));
   return evidence.verificationPassed ? 0 : 2;
 }
-main().then(code => { process.exitCode = code; }).catch(error => { console.error(clean(error.message)); process.exitCode = 2; });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runFiveToolVerification().then(code => { process.exitCode = code; }).catch(error => { console.error(clean(error.message)); process.exitCode = 2; });
+}

@@ -4,7 +4,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {join,resolve,dirname,basename,relative,isAbsolute} from 'node:path';
 import {assertSafeDirectory} from '../safe-io.mjs';
 import {safeRead,sha256,sourceManifest,sameInputs,verifySourcePin,PINS,SOURCES,OUTPUTS} from './validation.mjs';
-import {loadCloudflareContracts,buildRolePrompt,supervisedArgs,reconOutputSchema,STRATEGY} from './cloudflare-prompts.mjs';
+import {loadCloudflareContracts,buildRolePrompt,supervisedArgs,reconOutputSchema,STRATEGY,replayPromptVersion} from './cloudflare-prompts.mjs';
 import {stable,validateRecon,inspectRoleEvidence,preparePlan,officialHelpers} from './supervised-validation.mjs';
 const inside=(a,b)=>{const p=relative(resolve(a),resolve(b));return p===''||p!=='..'&&!p.startsWith('../')&&!p.startsWith('..\\')&&!isAbsolute(p);};
 const fail=message=>{throw new Error(`Cloudflare preparation: ${message}`);};
@@ -27,6 +27,7 @@ function optionsIdentity(options,command,args,nativeNodeExecutable,nativeNodeVer
 export async function inspectCloudflarePreparation({options,target,artifactDir,command,args=[],nativeNodeExecutable=process.execPath,nativeNodeVersion=process.versions.node}){
   const location=await preflightPreparationLocations({preparationFrom:options.preparationFrom,preparationSha256:options.preparationSha256,target,artifactDir,workRoot:options.workRoot}),m=JSON.parse(location.sourceManifestBytes),root=location.sourceArtifactRoot;
   if(m.schema!=='sec-hub.native-agent/v1'||m.id!=='cloudflare'||m.strategy!==STRATEGY||m.source!==SOURCES.cloudflare||m.sourceCommit!==PINS.cloudflare||m.backend!=='codex'||m.mode!=='supervised-official-security-audit-skill'||m.preparation!==undefined)fail('wrong source kind, pin, strategy or recursive preparation');
+  const promptVersion=replayPromptVersion(m);
   if(m.status!=='incomplete'||!Array.isArray(m.reasons)||m.reasons.length!==1||!/^Official coverage ledger invalid: \$\[\d+\]\.coverage_id: units must be sorted lexicographically$/.test(m.reasons[0]))fail('source is not the narrow host ledger sorting failure');
   if(m.model!==options.model||m.invocation?.command!==command||!sameInputs(m.invocation.args,args)||m.nativeNodeExecutable!==nativeNodeExecutable||m.nativeNodeVersion!==nativeNodeVersion||!text(m.backendVersion)||resolve(m.runner??'','../..')!==resolve(options.workRoot)||resolve(m.copyTarget??'','../runner')!==resolve(m.runner??''))fail('native configuration or work root differs');
   if(!Array.isArray(m.roles)||stable(m.roles.map(r=>r.role))!==stable(prefixRoles))fail('source must contain exactly four baseline recon roles and one planner; no downstream roles');
@@ -43,7 +44,7 @@ export async function inspectCloudflarePreparation({options,target,artifactDir,c
   const required=['execution-manifest.json'];
   for(const r of m.roles){
     if(!helper.isSafeAgentId(r.agentId)||!helper.isSafeAgentId(r.ownerId)||agentIds.has(r.agentId)||!Number.isInteger(r.pid)||r.pid<1||pids.has(r.pid)||!Number.isFinite(Date.parse(r.startedAt))||!Number.isFinite(Date.parse(r.endedAt))||Date.parse(r.endedAt)<Date.parse(r.startedAt))fail('invalid native role identity/time');agentIds.add(r.agentId);pids.add(r.pid);
-    const base=`roles/${r.agentId}`,context={role:r.role,agentId:r.ownerId,target:m.copyTarget,runner:m.runner,...(r.role==='planner'?{recon}:{})},expected=buildRolePrompt(c,context),schema=reconOutputSchema(r.role),schemaFile=schema?`${base}/output-schema.json`:null,schemaText=schema?JSON.stringify(schema,null,2)+'\n':null;
+    const base=`roles/${r.agentId}`,context={role:r.role,agentId:r.ownerId,target:m.copyTarget,runner:m.runner,...(r.role==='planner'?{recon}:{})},expected=buildRolePrompt(c,context,promptVersion),schema=reconOutputSchema(r.role),schemaFile=schema?`${base}/output-schema.json`:null,schemaText=schema?JSON.stringify(schema,null,2)+'\n':null;
     const names=['prompt.txt','events.jsonl','stderr.log','response.json'].map(f=>`${base}/${f}`);if(schemaFile)names.push(schemaFile);
     for(const name of names){if(!m.retainedFiles.includes(name)||!fileMap.has(name))fail('required preparation evidence missing');const data=await safeRead(join(root,name));if(sha256(data)!==fileMap.get(name).sha256)fail('source evidence changed during read');buffers.set(name,data);required.push(name);}
     if(schema){if(stable(r.outputSchema)!==stable({file:schemaFile,sha256:sha256(schemaText),bytes:Buffer.byteLength(schemaText)})||buffers.get(schemaFile).toString()!==schemaText)fail('native recon schema differs');}else if(r.outputSchema!==undefined)fail('planner must not have a replacement schema');
@@ -59,7 +60,9 @@ export async function inspectCloudflarePreparation({options,target,artifactDir,c
   const state=preparePlan(proposal,c,m.inputs,options.maxAgents,{requireGrouped:true});
   if(!sameInputs(files,await sourceManifest(root))||sha256(await safeRead(location.sourceManifestPath))!==options.preparationSha256)fail('source cohort changed during verification');
   const snapshotFiles=required.sort().map(path=>({path,sha256:fileMap.get(path)?.sha256??sha256(buffers.get(path)),size:buffers.get(path).length}));
-  const receipt={schema:receiptSchema,sourceManifestPath:location.sourceManifestPath,sourceArtifactRoot:root,sourceRunRoot:location.sourceRunRoot,sourceManifestSha256:options.preparationSha256,sourceStatus:m.status,sourceReasons:[...m.reasons],sourceArtifactFiles:files,snapshotRoot,snapshotFiles,chargedAgents:5,inputSha256:sha256(JSON.stringify(m.inputs)),sourceCommit:m.sourceCommit,instructions:m.instructions,nativeOptions:optionsIdentity(options,command,args,nativeNodeExecutable,nativeNodeVersion),backendVersion:m.backendVersion,roles:proofs};
+  // Preserve the exact historical receipt shape for unversioned source cohorts.
+  // The source snapshot itself binds its version independently of fresh roles.
+  const receipt={schema:receiptSchema,...(Object.hasOwn(m,'promptVersion')?{sourcePromptVersion:promptVersion}:{}),sourceManifestPath:location.sourceManifestPath,sourceArtifactRoot:root,sourceRunRoot:location.sourceRunRoot,sourceManifestSha256:options.preparationSha256,sourceStatus:m.status,sourceReasons:[...m.reasons],sourceArtifactFiles:files,snapshotRoot,snapshotFiles,chargedAgents:5,inputSha256:sha256(JSON.stringify(m.inputs)),sourceCommit:m.sourceCommit,instructions:m.instructions,nativeOptions:optionsIdentity(options,command,args,nativeNodeExecutable,nativeNodeVersion),backendVersion:m.backendVersion,roles:proofs};
   return {receipt,state,buffers,source:m,recon,retainedFiles:snapshotFiles.map(f=>`${snapshotRoot}/${f.path}`),threadIds:[...threads],agentIds:[...agentIds]};
 }
 export async function materializeCloudflarePreparation(prepared,artifactDir){

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, writeFile, access } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getAdapter } from '../src/adapters/index.mjs';
@@ -44,6 +46,7 @@ async function combine(options){const module=await import('../scripts/combine-ve
 
 test('combiner preserves initial failure history and builds five completed records with source provenance',async()=>{
   const data=await setup(),before=await readFile(path.join(data.original,'run.json'),'utf8');
+  const sourceBytes = [await fileHashes(data.original), await fileHashes(data.retry)];
   await combine(data);
   const combined=JSON.parse(await readFile(path.join(data.out,'run.json'),'utf8'));
   assert.equal(combined.status,'completed');assert.equal(combined.tools.length,5);assert.ok(combined.tools.every(tool=>tool.status==='completed'));
@@ -54,6 +57,14 @@ test('combiner preserves initial failure history and builds five completed recor
   assert.equal(combined.tools.find(tool=>tool.id==='osv').provenance.sourceRunId,'initial-id');
   assert.equal(combined.findings.length,5);assert.ok(combined.findings.every(finding=>path.isAbsolute(finding.rawRef)));
   assert.equal(await readFile(path.join(data.original,'run.json'),'utf8'),before);
+  assert.deepEqual([await fileHashes(data.original), await fileHashes(data.retry)], sourceBytes);
+  assert.deepEqual(combined.provenance.sourceRuns.map(source => source.sha256), sourceBytes.map(files => files['run.json']));
+  assert.deepEqual(combined.provenance.artifactHashEvidence.retry, sourceBytes[1]);
+  for (const finding of combined.findings) {
+    const directory = finding.toolId === 'open-code-review' ? data.retry : data.original;
+    const name = finding.toolId === 'php2shell' ? 'stdout.txt' : finding.toolId === 'codex-security' ? 'findings.json' : 'native.json';
+    assert.equal(finding.rawRef, path.join(directory, 'raw', finding.toolId, name));
+  }
 });
 
 test('combiner refuses source-byte mismatch failed retry and unrecognized target files',async()=>{
@@ -70,3 +81,67 @@ test('combiner refuses source-byte mismatch failed retry and unrecognized target
     await assert.rejects(combine(data),/hash|target|retry|artifact/i);
   }
 });
+
+// Interpose only at filesystem boundaries in an isolated child. Reads and writes
+// still use real files; the hook makes each mutation deterministic.
+async function combineDuringMutation(data, mutation) {
+  const source = `
+    import fs from 'node:fs/promises';
+    import { syncBuiltinESMExports } from 'node:module';
+    const data = JSON.parse(process.argv[1]), mutation = JSON.parse(process.argv[2]);
+    const realOpen = fs.open;
+    let triggered = false, readBytes = 0;
+    fs.open = async function(file, ...args) {
+      const handle = await realOpen.call(this, file, ...args);
+      if (String(file) !== mutation.file) return handle;
+      const realStat = handle.stat.bind(handle), realRead = handle.read.bind(handle), realReadFile = handle.readFile.bind(handle), realClose = handle.close.bind(handle);
+      handle.stat = async (...args) => {
+        const info = await realStat(...args);
+        if (!triggered && mutation.kind === 'grow') {
+          triggered = true;
+          await fs.appendFile(file, Buffer.alloc(21 * 1024 * 1024, 32));
+        }
+        return info;
+      };
+      handle.read = async (...args) => { const result = await realRead(...args); readBytes += result.bytesRead; return result; };
+      handle.readFile = async (...args) => { const result = await realReadFile(...args); readBytes += result.length; return result; };
+      handle.close = async () => {
+        await realClose();
+        if (!triggered && mutation.kind === 'replace' && new Error().stack.includes('verifyNative')) {
+          triggered = true;
+          await fs.writeFile(mutation.destination, '{}');
+        }
+      };
+      return handle;
+    };
+    syncBuiltinESMExports();
+    const { combineVerifiedRuns } = await import(${JSON.stringify(new URL('../scripts/combine-verified-runs.mjs',import.meta.url).href)});
+    let error = null;
+    try { await combineVerifiedRuns(data); } catch (caught) { error = caught.message; }
+    console.log(JSON.stringify({ error, triggered, readBytes }));
+  `;
+  const result = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source, JSON.stringify(data), JSON.stringify(mutation)]);
+  return JSON.parse(result.stdout);
+}
+
+test('combiner bounds reads when an already opened regular file grows after stat', async () => {
+  const data = await setup();
+  const result = await combineDuringMutation(data, { kind: 'grow', file: path.join(data.original, 'run.json') });
+  assert.equal(result.triggered, true);
+  assert.ok(result.error, 'growing input must be rejected');
+  assert.ok(result.readBytes <= 20 * 1024 * 1024 + 1, `read ${result.readBytes} bytes after a stale stat`);
+  await assert.rejects(access(data.out), { code: 'ENOENT' });
+});
+
+for (const source of ['original', 'retry']) {
+  for (const artifact of ['run.json', 'raw/open-code-review/native.json']) {
+    test(`combiner rejects changed ${source} ${artifact} before publishing hashes`, async () => {
+      const data = await setup();
+      const file = path.join(data[source], 'raw', source === 'original' ? 'osv' : 'open-code-review', 'native.json');
+      const result = await combineDuringMutation(data, { kind: 'replace', file, destination: path.join(data[source], artifact) });
+      assert.equal(result.triggered, true);
+      assert.ok(result.error, `${source} ${artifact} changed after validation but aggregate was published`);
+      await assert.rejects(access(data.out), { code: 'ENOENT' });
+    });
+  }
+}

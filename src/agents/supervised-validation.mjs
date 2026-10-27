@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { atomicWriteFile } from '../safe-io.mjs';
 import { nativeOptions, PINS, SOURCES, OUTPUTS, safeRead, sha256, sourceManifest, sameInputs, verifySourcePin, runOfficialValidators } from './validation.mjs';
-import { loadCloudflareContracts, buildRolePrompt, supervisedArgs, reconOutputSchema, STRATEGY, LABEL } from './cloudflare-prompts.mjs';
+import { loadCloudflareContracts, buildRolePrompt, supervisedArgs, reconOutputSchema, STRATEGY, LABEL, replayPromptVersion } from './cloudflare-prompts.mjs';
 const require=createRequire(import.meta.url),prevalidated=new Map();
 const text=s=>typeof s==='string'&&s.trim().length>0;
 const clone=x=>JSON.parse(JSON.stringify(x));
@@ -212,6 +212,7 @@ export async function validateSupervisedCloudflare(ctx){
   const cfg=ctx.config?.tools?.cloudflare,options=nativeOptions('cloudflare',cfg?.agentOptions),manifestBytes=await safeRead(join(ctx.artifactDir,'execution-manifest.json')),m=JSON.parse(manifestBytes),reasons=[];
   if(options.strategy!==STRATEGY||m.schema!=='sec-hub.native-agent/v1'||m.id!=='cloudflare'||m.strategy!==STRATEGY||m.source!==SOURCES.cloudflare||m.sourceCommit!==PINS.cloudflare||resolve(m.target??'')!==resolve(ctx.target)||m.model!==options.model||m.backend!=='codex'||m.mode!=='supervised-official-security-audit-skill'||!Array.isArray(m.roles)||m.roles.length>options.maxAgents||!Array.isArray(m.inputs)||!m.inputs.length)throw new Error('Invalid supervised native manifest/configuration');
   if(m.invocation?.command!==cfg.command||!sameInputs(m.invocation.args,cfg.args??[])||!isAbsolute(m.nativeNodeExecutable??'')||Number.parseInt(m.nativeNodeVersion)<22||!text(m.backendVersion))throw new Error('Native supervised backend configuration differs');
+  const promptVersion=replayPromptVersion(m);
   const pin=await verifySourcePin('cloudflare',options);if(!sameInputs(pin,m.instructions))throw new Error('Pinned instructions differ');
   if(!sameInputs(await sourceManifest(ctx.target),m.inputs)||!sameInputs(m.inputs,m.copyBefore)||!sameInputs(m.inputs,m.copyAfter)||!sameInputs(m.inputs,m.originalAfter))throw new Error('Source preservation failed');
   const c=await loadCloudflareContracts(options.skillRoot),hashes={};
@@ -236,7 +237,7 @@ export async function validateSupervisedCloudflare(ctx){
       if(r.role==='critic'){if(criticSeen||hunterRecords.length!==state.assignments.length)throw new Error('Exactly one critic must follow every hunter');criticSeen=true;}
       if(r.role==='verifier'){if(!criticSeen||!state.candidates.has(r.fingerprint))throw new Error('Verifier phase/fingerprint invalid');context.candidate=state.candidates.get(r.fingerprint);context.units=state.ledger.filter(u=>u.result_fingerprints.includes(r.fingerprint));context.checks=context.units.flatMap(u=>u.local_checks);verifierRecords.push(r);}
     }
-    const expected=buildRolePrompt(c,context),schema=reconOutputSchema(r.role),schemaFile=schema?`${base}/output-schema.json`:null,schemaText=schema?JSON.stringify(schema,null,2)+'\n':null;
+    const expected=buildRolePrompt(c,context,promptVersion),schema=reconOutputSchema(r.role),schemaFile=schema?`${base}/output-schema.json`:null,schemaText=schema?JSON.stringify(schema,null,2)+'\n':null;
     if(schema){const schemaMeta={file:schemaFile,sha256:sha256(schemaText),bytes:Buffer.byteLength(schemaText)};if(stable(r.outputSchema)!==stable(schemaMeta)||!m.retainedFiles.includes(schemaFile)||(await safeRead(resolve(ctx.artifactDir,schemaFile))).toString()!==schemaText)throw new Error('Native recon output schema differs from trusted contract');}else if(r.outputSchema!==undefined)throw new Error('Unexpected output schema on non-recon role');
     const args=[...(cfg.args??[]),...supervisedArgs(m.runner,options,m.nativeNodeExecutable,schemaFile?resolve(ctx.artifactDir,schemaFile):null)];
     if(r.command!==cfg.command||stable(r.args)!==stable(args)||r.cwd!==m.runner||r.promptSha256!==sha256(expected.prompt)||r.promptBytes!==Buffer.byteLength(expected.prompt)||stable(r.sourceBlocks)!==stable(expected.sourceBlocks)||(await safeRead(join(ctx.artifactDir,base,'prompt.txt'))).toString()!==expected.prompt)throw new Error(`Native ${r.role} invocation/prompt differs from trusted reconstruction`);
