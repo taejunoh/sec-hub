@@ -104,3 +104,75 @@ test('retry time is accepted only from explicit structured reset fields', () => 
 
   assert.equal(result.retryAt, undefined);
 });
+
+test('ordinary source, tool, and assistant payload fields cannot classify a successful provider turn', () => {
+  const source = { code: 'permission_denied', type: 'authentication_error', subtype: 'usage_limit_reached',
+    status: 403, reset_at: '2099-01-01T00:00:00Z', error: { code: 'budget_exceeded' } };
+  const payloads = [
+    { type: 'item.completed', item: { type: 'mcp_tool_call', arguments: source, result: source } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', input: source }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', is_error: true, content: JSON.stringify(source) }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: JSON.stringify(source) }] } }
+  ];
+  assert.deepEqual(inspectTerminalOutcome('codex', [
+    { type: 'item.completed', item: { type: 'tool_result', result: { code: 'permission_denied' } } },
+    { type: 'turn.completed' }
+  ], 0), { ok: true, category: 'success' });
+  for (const terminal of [{ type: 'turn.completed' }, { type: 'result', subtype: 'success', is_error: false, result: source }]) {
+    assert.deepEqual(inspectTerminalOutcome('codex', [...payloads, terminal], 0), { ok: true, category: 'success' });
+  }
+});
+
+test('handled intermediate provider errors cannot overshadow final success', () => {
+  const events = [
+    { type: 'error', message: JSON.stringify({ error: { code: 'permission_denied' }, status: 403 }) },
+    { type: 'assistant', is_api_error_message: true, error: { type: 'rate_limit_error', status: 429 } },
+    { type: 'turn.failed', error: { code: 'authentication_error' } },
+    { type: 'turn.completed' }
+  ];
+  assert.deepEqual(inspectTerminalOutcome('codex', events, 0), { ok: true, category: 'success' });
+  assert.equal(inspectTerminalOutcome('codex', events, 2).ok, false);
+});
+
+test('failure classification reads provider error envelopes without traversing quoted payloads', () => {
+  const events = [
+    { type: 'item.completed', item: { result: { code: 'permission_denied', status: 403 } } },
+    { type: 'turn.failed', error: { code: 'transport_error', details: { code: 'authentication_error' } } }
+  ];
+  const result = inspectTerminalOutcome('codex', events, 1);
+  assert.equal(result.category, 'backend_error');
+  assert.equal(result.statusCode, undefined);
+});
+
+test('real final policy, transport, and tool-process failures remain failures', () => {
+  for (const code of ['content_policy_violation', 'transport_error', 'tool_process_failed']) {
+    const result = inspectTerminalOutcome('codex', [
+      { type: 'turn.failed', error: { code } }
+    ], 1);
+    assert.equal(result.ok, false);
+    assert.equal(result.category, 'backend_error');
+  }
+  assert.equal(inspectTerminalOutcome('codex', [
+    { type: 'turn.completed' }, { type: 'turn.failed', error: { code: 'permission_denied' } }
+  ], 0).category, 'permission_denied');
+});
+
+test('malformed or absent terminal metadata cannot borrow classifications from source content', () => {
+  const payload = { type: 'assistant', message: { code: 'permission_denied', status: 403 } };
+  for (const events of [[payload], [payload, { type: 'result', subtype: 'unexpected', result: { code: 'authentication_error' } }]]) {
+    assert.deepEqual(inspectTerminalOutcome('anthropic', events, 0), {
+      ok: false, category: 'missing_terminal', reason: 'The provider did not report a recognized terminal outcome.'
+    });
+  }
+});
+
+
+test('a recovered turn cannot supply stale diagnostics to a later failed turn', () => {
+  const result = inspectTerminalOutcome('codex', [
+    { type: 'error', error: { code: 'usage_limit_reached', status: 429 } },
+    { type: 'turn.completed' },
+    { type: 'turn.failed', error: { code: 'authentication_error', status: 401 } }
+  ], 1);
+  assert.equal(result.category, 'auth_expired');
+  assert.equal(result.statusCode, 401);
+});

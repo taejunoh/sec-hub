@@ -27,30 +27,42 @@ function parseJsonString(value) {
   }
 }
 
+function isFailure(event) {
+  const type = String(event.type ?? '').toLowerCase();
+  const subtype = String(event.subtype ?? '').toLowerCase();
+  return type.endsWith('.failed') || type === 'error' || subtype.startsWith('error')
+    || event.is_error === true || event.terminal_reason === 'api_error';
+}
+
+function isSuccess(event) {
+  const type = String(event.type ?? '').toLowerCase();
+  return (type === 'result' && String(event.subtype ?? '').toLowerCase() === 'success')
+    || ['turn.completed', 'response.completed', 'thread.completed'].includes(type);
+}
+
 function collect(events) {
   const strings = [];
   const statuses = [];
   const resets = [];
-  const terminals = [];
-  let hasPermissionDenials = false;
   const seen = new Set();
 
-  function visit(value, depth = 0, inErrorContext = false, inTerminalContext = false) {
+  // Only provider error envelopes have classification authority. Tool inputs,
+  // results, assistant content, and arbitrary nested payloads can quote the same
+  // field names and must never be interpreted as provider state.
+  function visit(value, depth = 0) {
     if (depth > 8 || value == null) return;
     if (typeof value === 'string') {
-      if (inErrorContext) strings.push(value);
       const parsed = parseJsonString(value);
-      if (parsed) visit(parsed, depth + 1, inErrorContext, inTerminalContext);
+      if (parsed) visit(parsed, depth + 1);
+      else strings.push(value);
       return;
     }
     if (typeof value !== 'object' || seen.has(value)) return;
     seen.add(value);
     if (Array.isArray(value)) {
-      for (const child of value) visit(child, depth + 1, inErrorContext, inTerminalContext);
+      for (const child of value) visit(child, depth + 1);
       return;
     }
-
-    const objectErrorContext = inErrorContext || value.is_api_error_message === true;
     for (const [key, child] of Object.entries(value)) {
       const normalizedKey = key.toLowerCase().replaceAll('-', '_');
       if (['status', 'status_code', 'api_error_status'].includes(normalizedKey)) {
@@ -60,30 +72,23 @@ function collect(events) {
       if (['reset_at', 'resetat', 'reset_time', 'retry_at', 'retryat'].includes(normalizedKey) && typeof child === 'string') {
         resets.push(child);
       }
-      if (inTerminalContext && normalizedKey === 'permission_denials' && Array.isArray(child) && child.length > 0) {
-        hasPermissionDenials = true;
-      }
       if (['code', 'type', 'subtype', 'terminal_reason'].includes(normalizedKey) && typeof child === 'string') {
         strings.push(child);
       }
-      const childIsError = objectErrorContext
-        || ['error', 'errors', 'cause'].includes(normalizedKey);
-      if (normalizedKey === 'message' && childIsError && typeof child === 'string') strings.push(child);
-      visit(child, depth + 1, childIsError, inTerminalContext);
+      if (['error', 'errors', 'cause', 'message'].includes(normalizedKey)) visit(child, depth + 1);
     }
   }
 
   for (const event of events) {
-    if (!event || typeof event !== 'object') continue;
-    const type = typeof event.type === 'string' ? event.type.toLowerCase() : '';
-    const subtype = typeof event.subtype === 'string' ? event.subtype.toLowerCase() : '';
-    if (TERMINAL_TYPES.has(type) || (type === 'result' && subtype)) terminals.push(event);
-    const isErrorTerminal = type.endsWith('.failed') || type === 'error'
-      || subtype.startsWith('error') || event.is_error === true;
-    visit(event, 0, isErrorTerminal, terminals.includes(event));
+    const type = String(event?.type ?? '').toLowerCase();
+    if (!event || typeof event !== 'object'
+      || !(isFailure(event) && TERMINAL_TYPES.has(type)
+        || type === 'assistant' && event.is_api_error_message === true)) continue;
+    visit(event);
+    // Claude's error result text is provider diagnostics only on failed results.
+    if (type === 'result' && typeof event.result === 'string') visit(event.result);
   }
-
-  return { strings, statuses, resets, terminals, hasPermissionDenials };
+  return { strings, statuses, resets };
 }
 
 function categoryFor(strings) {
@@ -121,29 +126,25 @@ export function inspectTerminalOutcome(toolId, events, exitCode) {
   // toolId is part of the public contract so callers can pass the native tool
   // identity; classification relies on provider event fields, not tool labels.
   void toolId;
-  const data = collect(Array.isArray(events) ? events : []);
+  const stream = (Array.isArray(events) ? events : []).filter(event => event && typeof event === 'object');
+  const terminal = stream.findLast(event => TERMINAL_TYPES.has(String(event.type ?? '').toLowerCase()));
+  if (!terminal) return outcome('missing_terminal');
+
+  const success = isSuccess(terminal);
+  const failed = isFailure(terminal);
+  if (Array.isArray(terminal.permission_denials) && terminal.permission_denials.length > 0) {
+    return outcome('permission_denied');
+  }
+  if (success && !failed && (exitCode == null || exitCode === 0)) return outcome('success');
+  if (!success && !failed) return outcome('missing_terminal');
+
+  // Successful completed turns delimit recovered failures from earlier attempts.
+  const terminalIndex = stream.lastIndexOf(terminal);
+  const previousSuccess = stream.slice(0, terminalIndex).findLastIndex(event => isSuccess(event) && !isFailure(event));
+  const data = collect(stream.slice(previousSuccess + 1, terminalIndex + 1));
   const statusCode = data.statuses[0];
   const retryAt = parseRetryAt(data.resets);
   const classified = categoryFor(data.strings);
   if (classified) return outcome(classified, { statusCode, retryAt });
-
-  const terminal = data.terminals.at(-1);
-  if (!terminal) return outcome('missing_terminal', { statusCode, retryAt });
-
-  const terminalType = String(terminal.type ?? '').toLowerCase();
-  const terminalSubtype = String(terminal.subtype ?? '').toLowerCase();
-  const isSuccess = (terminalType === 'result' && terminalSubtype === 'success')
-    || terminalType === 'turn.completed'
-    || terminalType === 'response.completed'
-    || terminalType === 'thread.completed';
-
-  if (data.hasPermissionDenials) return outcome('permission_denied', { statusCode, retryAt });
-  if (terminal.is_error === true || terminal.terminal_reason === 'api_error') {
-    return outcome('backend_error', { statusCode, retryAt });
-  }
-  if (isSuccess && (exitCode == null || exitCode === 0)) return outcome('success');
-  if (isSuccess && exitCode !== 0) return outcome('backend_error', { statusCode, retryAt });
-  if (terminalType.endsWith('.failed') || terminalType === 'error'
-    || terminalSubtype.startsWith('error')) return outcome('backend_error', { statusCode, retryAt });
-  return outcome('missing_terminal', { statusCode, retryAt });
+  return outcome('backend_error', { statusCode, retryAt });
 }

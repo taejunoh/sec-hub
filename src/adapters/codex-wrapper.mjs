@@ -42,8 +42,15 @@ async function main() {
     }
     return interrupted || code;
   } finally {
-    try { await cp(results, join(options.artifactDir, 'codex-results'), { recursive: true, dereference: false, errorOnExist: true, force: false }); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try {
+      await cp(results, join(options.artifactDir, 'codex-results'), { recursive: true, dereference: false, errorOnExist: true, force: false });
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        // Keep the private mkdtemp tree when copying evidence fails; deleting it would lose the only native results.
+        console.error(`Codex Security native results could not be copied; private temporary results retained at ${temporary}.`);
+        throw error;
+      }
+    }
     await rm(temporary, { recursive: true, force: true });
   }
 }

@@ -57,7 +57,7 @@ async function nativeJSON(ctx, id) {
   else {
     const path = join(ctx.artifactDir, id === 'codex-security' ? 'findings.json' : 'native.json');
     // A handle prevents a path swap between metadata validation and the bounded read.
-    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch(() => invalid(id, 'native JSON output file is missing or unsafe'));
+    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)).catch(() => invalid(id, 'native JSON output file is missing or unsafe'));
     try {
       const info = await handle.stat();
       if (!info.isFile() || info.size > MAX_NATIVE_BYTES) invalid(id, 'native JSON output exceeds limit or is not a file');
