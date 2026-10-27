@@ -122,12 +122,30 @@ export function compareRuns(baseRun,currentRun,{failOn='high'}={}){
   function add(category,before,after){const i=after??before;const reasons=[];if(i.weak)reasons.push('weak-identity');if(category==='new'){reasons.push('newly-observed');reasons.push(...(coverage.find(c=>c.toolId===i.finding.toolId)?.reasons.filter(r=>r.startsWith('baseline:'))??[]));}if(category==='unobserved')reasons.push(...(coverage.find(c=>c.toolId===i.finding.toolId)?.reasons??[]));if(category==='regressed')reasons.push(before.finding.severity==='unknown'||after.finding.severity==='unknown'?'severity-knownness-changed':'severity-increased');entries.push({identity:i.identity,identityMethod:i.identityMethod,category,...(before?{before:before.finding}:{}),...(after?{after:after.finding}:{}),reasons:[...new Set(reasons)].sort(order)});}
   for(const {before,after} of groups.values()){
     before.sort((a,b)=>order(a.content,b.content));after.sort((a,b)=>order(a.content,b.content));
-    function pair(test){for(let i=before.length-1;i>=0;i--){const j=after.findIndex(a=>test(before[i],a));if(j<0)continue;const b=before.splice(i,1)[0],a=after.splice(j,1)[0];const bs=b.finding.severity,as=a.finding.severity;add((bs==='unknown')!==(as==='unknown')||rank[as]>rank[bs]?'regressed':'existing',b,a);}}
-    pair((b,a)=>b.finding.severity===a.finding.severity&&b.content===a.content);pair((b,a)=>b.finding.severity===a.finding.severity);
-    before.sort((a,b)=>rank[b.finding.severity]-rank[a.finding.severity]||order(a.content,b.content));after.sort((a,b)=>rank[b.finding.severity]-rank[a.finding.severity]||order(a.content,b.content));
-    while(before.length&&after.length){const b=before.shift(),a=after.shift();add((b.finding.severity==='unknown')!==(a.finding.severity==='unknown')||rank[a.finding.severity]>rank[b.finding.severity]?'regressed':'existing',b,a);}
-    for(const b of before)add(!b.weak&&coverage.find(c=>c.toolId===b.finding.toolId)?.reasons.length===0?'resolved':'unobserved',b);
-    for(const a of after)add('new',undefined,a);
+    const usedBefore=new Set(),usedAfter=new Set();
+    function match(b,a){const bs=b.finding.severity,as=a.finding.severity;add((bs==='unknown')!==(as==='unknown')||rank[as]>rank[bs]?'regressed':'existing',b,a);}
+    // Each pass consumes baseline records in reverse content order and the earliest
+    // remaining current record, preserving the original occurrence pairing.
+    function pairBy(keyFor){
+      const queues=new Map();
+      for(let j=0;j<after.length;j++){
+        if(usedAfter.has(j))continue;
+        const k=keyFor(after[j]);if(!queues.has(k))queues.set(k,{indices:[],head:0});queues.get(k).indices.push(j);
+      }
+      for(let i=before.length-1;i>=0;i--){
+        if(usedBefore.has(i))continue;
+        const queue=queues.get(keyFor(before[i]));if(!queue||queue.head===queue.indices.length)continue;
+        const j=queue.indices[queue.head++];usedBefore.add(i);usedAfter.add(j);match(before[i],after[j]);
+      }
+    }
+    pairBy(item=>item.content);pairBy(item=>item.finding.severity);
+    const remainingBefore=before.filter((_,i)=>!usedBefore.has(i)),remainingAfter=after.filter((_,i)=>!usedAfter.has(i));
+    const bySeverity=(a,b)=>rank[b.finding.severity]-rank[a.finding.severity]||order(a.content,b.content);
+    remainingBefore.sort(bySeverity);remainingAfter.sort(bySeverity);
+    const matched=Math.min(remainingBefore.length,remainingAfter.length);
+    for(let i=0;i<matched;i++)match(remainingBefore[i],remainingAfter[i]);
+    for(let i=matched;i<remainingBefore.length;i++){const b=remainingBefore[i];add(!b.weak&&coverage.find(c=>c.toolId===b.finding.toolId)?.reasons.length===0?'resolved':'unobserved',b);}
+    for(let i=matched;i<remainingAfter.length;i++)add('new',undefined,remainingAfter[i]);
   }
   entries.sort((a,b)=>order(a.identity,b.identity)||order(a.category,b.category)||order(key(a),key(b)));
   const ordinals=new Map();for(const e of entries){const ordinal=(ordinals.get(e.identity)??0)+1;ordinals.set(e.identity,ordinal);e.id=`cmp-v1-${e.identity}-${ordinal}`;}

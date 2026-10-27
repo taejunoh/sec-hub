@@ -227,7 +227,7 @@ export async function importBridge(id, file, target) {
     if (parsed.length === 0) throw new TypeError('Empty unsupported Cloudflare native report');
     parsed.forEach(validateNativeRecord);
     rejected = parsed.filter((record) => record.verdict === 'rejected').length;
-    sourceFindings = parsed.filter((record) => record.verdict !== 'rejected').map(nativeFinding);
+    sourceFindings = parsed.flatMap((record, index) => record.verdict === 'rejected' ? [] : [nativeFinding(record, index)]);
     format = 'cloudflare-native';
   } else {
     sourceFindings = validateContract(parsed, id);

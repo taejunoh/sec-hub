@@ -3,6 +3,8 @@
 import { spawn, execFile } from 'node:child_process';
 import { mkdir, mkdtemp, symlink, writeFile, open, rm } from 'node:fs/promises';
 import { join, relative, resolve, isAbsolute, dirname } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
+import { pathToFileURL } from 'node:url';
 import { ensureSafeDirectory, atomicWriteFile } from '../safe-io.mjs';
 import { validateAgentOptions } from '../config.mjs';
 import { PINS,SOURCES,OUTPUTS,nativeOptions,safeRead,sha256,sourceManifest,copySources,sameInputs,inspectNativeEvents,verifyCloudflareRecords,verifySourcePin,runOfficialValidators,parseAnthropicDocument } from './validation.mjs';
@@ -14,12 +16,13 @@ for(const [signal,code] of [['SIGTERM',143],['SIGINT',130]])process.on(signal,()
 function inside(parent,child){const rel=relative(resolve(parent),resolve(child));return rel===''||(!rel.startsWith('..')&&!isAbsolute(rel));}
 async function run(command,args,{cwd,env,prompt='',artifactDir,label='native',onEvent,limit=20*1024*1024}){
   const out=await open(join(artifactDir,`${label}-events.jsonl`),'wx',0o600),err=await open(join(artifactDir,`${label}-stderr.log`),'wx',0o600);
-  let bytes=0,outputLimitExceeded=false,writeError=false,eventBuffer='';const stdout=[],stderr=[];let pending=Promise.resolve();
+  let bytes=0,outputLimitExceeded=false,writeError=false,eventBuffer='';const stdout=[],stderr=[];let pending=Promise.resolve();const eventDecoder=new StringDecoder('utf8');
+  const parseEvents=text=>{eventBuffer+=text;let nl;while((nl=eventBuffer.indexOf('\n'))>=0){const line=eventBuffer.slice(0,nl);eventBuffer=eventBuffer.slice(nl+1);if(line.trim())try{onEvent?.(JSON.parse(line));}catch{active?.kill('SIGTERM');}}};
   try{
     const code=await new Promise((resolveCode,reject)=>{
       active=spawn(command,args,{cwd,env,shell:false,detached:false,stdio:['pipe','pipe','pipe'],windowsHide:true});
       const capture=(handle,chunks)=>chunk=>{bytes+=chunk.length;if(bytes>limit){outputLimitExceeded=true;active?.kill('SIGTERM');return;}chunks.push(chunk);pending=pending.then(()=>handle.write(chunk)).catch(()=>{writeError=true;active?.kill('SIGTERM');});};
-      active.stdout.on('data',chunk=>{capture(out,stdout)(chunk);if(bytes>limit)return;if(onEvent){eventBuffer+=chunk.toString();let nl;while((nl=eventBuffer.indexOf('\n'))>=0){const line=eventBuffer.slice(0,nl);eventBuffer=eventBuffer.slice(nl+1);if(line.trim())try{onEvent(JSON.parse(line));}catch{active?.kill('SIGTERM');}}}});active.stderr.on('data',capture(err,stderr));active.once('error',reject);active.once('close',(code,signal)=>{active=undefined;resolveCode(code??(signal==='SIGINT'?130:143));});active.stdin.on('error',()=>{});active.stdin.end(prompt);
+      active.stdout.on('data',chunk=>{capture(out,stdout)(chunk);if(bytes<=limit&&onEvent)parseEvents(eventDecoder.write(chunk));});active.stderr.on('data',capture(err,stderr));active.once('error',reject);active.once('close',(code,signal)=>{if(onEvent){parseEvents(eventDecoder.end());if(eventBuffer.trim())parseEvents('\n');}active=undefined;resolveCode(code??(signal==='SIGINT'?130:143));});active.stdin.on('error',()=>{});active.stdin.end(prompt);
     });await pending;if(writeError)throw new Error('Native evidence log write failed');return {exitCode:code,interrupted,outputLimitExceeded,stdout:Buffer.concat(stdout).toString(),stderr:Buffer.concat(stderr).toString()};
   }finally{await out.close();await err.close();}
 }
@@ -72,10 +75,14 @@ async function main(){
       const finalInstructions=await verifySourcePin(cfg.id,options);if(!sameInputs(instructions,finalInstructions))manifest.reasons.push('Official source changed during execution');
     }catch(error){manifest.reasons.push(error.message);}
     manifest.endedAt=new Date().toISOString();manifest.status=manifest.reasons.length?'incomplete':'complete';
-    await atomicWriteFile(join(cfg.artifactDir,'execution-manifest.json'),`${JSON.stringify(manifest,null,2)}\n`);
-    // Retain only explicitly promoted outputs/logs. The source copy is never sanitized.
-    await rm(stage,{recursive:true,force:true});
+    let finalizationError;
+    try{await atomicWriteFile(join(cfg.artifactDir,'execution-manifest.json'),`${JSON.stringify(manifest,null,2)}\n`);}catch(error){finalizationError=error;}finally{
+      // Keep a stage that may still be in use; otherwise clean it even when publication failed.
+      try{if(active){console.error(`Native staging retained while process termination is pending at ${stage}.`);}else await rm(stage,{recursive:true,force:true});}catch(error){console.error(`Native staging cleanup failed at ${stage}: ${error.message}`);if(!finalizationError)finalizationError=error;}
+    }
+    if(finalizationError)throw finalizationError;
   }
   console.log(`${cfg.id}: native workflow ${manifest.status}; trusted execution manifest retained.`);return manifest.status==='complete'?0:2;
 }
-try{process.exitCode=await main();}catch(error){console.error(`Native agent wrapper failed: ${error.message}`);process.exitCode=2;}
+export { run };
+if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){try{process.exitCode=await main();}catch(error){console.error(`Native agent wrapper failed: ${error.message}`);process.exitCode=2;}}

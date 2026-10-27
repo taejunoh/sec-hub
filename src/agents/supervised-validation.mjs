@@ -17,10 +17,43 @@ export function validateLocations(locations,inputs){
   if(!Array.isArray(locations)||!locations.length)throw new Error('Missing grounded source locations');
   for(const loc of locations){const input=inputs.find(x=>x.path===loc?.file);if(!input||!Number.isInteger(loc.line)||loc.line<1||loc.line>input.lines||!text(loc.description))throw new Error('Invalid source path or line bounds');}
 }
+function reasonCitations(reason,inputs,{rejectBare=false}={}){
+  const spans=[];
+  const before=ch=>ch===undefined||/[\s`"'([\]{}<>;,]/.test(ch);
+  const after=s=>!s||/^[\s`"'()[\]{}<>;,:]/.test(s)||/^\.(?=$|[\s`"'()[\]{}<>;,])/.test(s);
+  // Match whole retained paths literally, including spaces and parentheses.
+  // A suffix of an absolute, traversal, encoded or otherwise prefixed path
+  // cannot supply grounding. Never normalize or resolve citation paths.
+  for(const input of inputs){
+    const escaped=input.path.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    for(const m of reason.matchAll(new RegExp(`${escaped}:(\\d+(?:[-–—]\\d+)?(?:,\\d+(?:[-–—]\\d+)?)*)`,'g'))){
+      if(!before(reason[m.index-1]))continue;
+      if(!after(reason.slice(m.index+m[0].length)))throw new Error('Invalid inline source citation');
+      if(m[1].match(/\d+/g).some(line=>+line<1||+line>input.lines))throw new Error('Invalid reason source line');
+      spans.push([m.index,m.index+m[0].length]);
+    }
+  }
+  // Inspect every remaining explicit citation, even if another one was valid.
+  // Covered spans permit filenames with whitespace/delimiters without letting
+  // the generic token scanner reinterpret only a suffix of those filenames.
+  for(const m of reason.matchAll(/([^\s`"'()[\]{}<>;,]+):(\d+)/g)){
+    if(spans.some(([a,b])=>m.index>=a&&m.index+m[0].length<=b))continue;
+    const retained=inputs.some(input=>input.path===m[1]);
+    if(!retained&&/^\d+$/.test(m[1]))continue;
+    // In prose requiring a citation, an unknown bare label (RFC:7231, for
+    // example) is ambiguous, not evidence. Only path-shaped unknown tokens
+    // are rejected there. Structured paired reasons retain their preexisting
+    // stricter rule for all explicit inline tokens. Exact retained bare names
+    // (e.g. Dockerfile:1) must pass the full validation above; malformed suffixes
+    // cannot turn a retained name into an ignored ambiguous prose label.
+    if(!rejectBare&&!retained&&!/[./\\%?]/.test(m[1]))continue;
+    throw new Error('Invalid inline source citation');
+  }
+  return spans.length;
+}
 function cite(reason,inputs){
-  if(!text(reason))throw new Error('Missing grounded reason');let found=false;
-  for(const input of inputs){const escaped=input.path.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),re=new RegExp(`${escaped}:(\\d+)`,'g');for(const m of reason.matchAll(re)){found=true;if(+m[1]<1||+m[1]>input.lines)throw new Error('Invalid reason source line');}}
-  if(!found)throw new Error('Reason lacks source file:line grounding');
+  if(!text(reason))throw new Error('Missing grounded reason');
+  if(!reasonCitations(reason,inputs))throw new Error('Reason lacks source file:line grounding');
 }
 function pairedReason(reason,locations,inputs){
   if(!text(reason))throw new Error('Missing grounded reason');
@@ -29,9 +62,7 @@ function pairedReason(reason,locations,inputs){
   // object's required evidence/grounding array. The official workflow does not
   // require duplicating that reference inside the prose. Explicit inline
   // citations, when present, must still name real files and valid lines.
-  const spans=[];
-  for(const input of inputs){const escaped=input.path.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');for(const m of reason.matchAll(new RegExp(`${escaped}:(\\d+)`,'g'))){if(+m[1]<1||+m[1]>input.lines)throw new Error('Invalid reason source line');spans.push([m.index,m.index+m[0].length]);}}
-  for(const m of reason.matchAll(/([^\s`"'()[\]{}<>;,]+):(\d+)/g)){if(/^\d+$/.test(m[1])||spans.some(([a,b])=>m.index>=a&&m.index+m[0].length<=b))continue;const input=inputs.find(i=>i.path===m[1]);if(!input||+m[2]<1||+m[2]>input.lines)throw new Error('Invalid inline source citation');}
+  reasonCitations(reason,inputs,{rejectBare:true});
 }
 function validateLedger(ledger,c){const errors=officialHelpers(c).ledger.validateDocument(ledger);if(errors.length)throw new Error(`Official coverage ledger invalid: ${errors.slice(0,3).join('; ')}`);}
 export function validateRecords(records,c,inputs){

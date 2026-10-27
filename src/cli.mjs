@@ -55,7 +55,8 @@ export async function main(argv,{stdout=process.stdout,stderr=process.stderr}={}
     if(!argv.length||argv[0]==='--help'||argv[0]==='-h'||argv[0]==='help'){say(HELP);return 0;}
     if(argv[0]==='--version'||argv[0]==='-v'){say('0.2.0');return 0;}
     const [command,...args]=argv;if(!Object.hasOwn(optionsByCommand,command))throw new Error(`Unknown command: ${command}`);
-    if(args.includes('--help')){say(HELP);return 0;}
+    const delimiter=args.indexOf('--');
+    if(args.slice(0,delimiter<0?args.length:delimiter).some(arg=>arg==='--help'||arg==='-h')){say(HELP);return 0;}
     const {positional,options}=parseArgs(args,optionsByCommand[command]);
     if(command==='serve'){
       expectCount(positional,0);

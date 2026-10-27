@@ -40,7 +40,8 @@ async function runRoleProcess(command,args,{cwd,env,prompt,dir,record,deadline,a
     await pending;record.interrupted=signalState.code||0;record.outputLimitExceeded=limit;record.writeError=writeError;
   }finally{
     clearTimeout(timer);await Promise.all([out.close(),err.close()]);
-    try{await terminateGroup(record.pid);}finally{if(record.pid)active.delete(record.pid);record.endedAt=new Date().toISOString();}
+    // Keep ownership until termination is established so outer cleanup can retry.
+    try{await terminateGroup(record.pid);if(record.pid)active.delete(record.pid);}finally{record.endedAt=new Date().toISOString();}
   }
   if(streamFailure)throw streamFailure;if(record.timedOut)throw new Error('Native role wall-time limit exceeded');if(writeError)throw new Error('Native evidence log write failed');
 }
@@ -126,8 +127,9 @@ export async function runSupervisedCloudflare(payload){
     for(const fingerprint of [...state.candidates.keys()].sort()){
       let decided=false,lastError;
       while(!decided&&charged+manifest.roles.length<options.maxAgents){
-        const candidate=state.candidates.get(fingerprint),units=state.ledger.filter(u=>u.result_fingerprints.includes(fingerprint));let v;
-        try{v=await invoke('verifier',`verifier-${charged+manifest.roles.length+1}`,{architecture:state.architecture,units,candidate,checks:units.flatMap(u=>u.local_checks)});applyVerifier(state,v.response,fingerprint,c,inputs,v.record.ownerId);decided=true;await save();}catch(e){lastError=e;if(v){v.record.accepted=false;v.record.failure=e.message;}if(e.fatalPolicy)throw e;if(signalState.code)break;}
+        // Only a counted native attempt can justify retrying within this budget.
+        const rolesBefore=manifest.roles.length,candidate=state.candidates.get(fingerprint),units=state.ledger.filter(u=>u.result_fingerprints.includes(fingerprint));let v;
+        try{v=await invoke('verifier',`verifier-${charged+manifest.roles.length+1}`,{architecture:state.architecture,units,candidate,checks:units.flatMap(u=>u.local_checks)});applyVerifier(state,v.response,fingerprint,c,inputs,v.record.ownerId);decided=true;await save();}catch(e){lastError=e;if(v){v.record.accepted=false;v.record.failure=e.message;}if(e.fatalPolicy)throw e;if(signalState.code||Date.now()>=deadline||manifest.roles.length===rolesBefore)break;}
       }
       if(!decided)manifest.reasons.push(lastError?.message??`Independent verifier budget exhausted for ${fingerprint}`);
     }
@@ -141,18 +143,22 @@ export async function runSupervisedCloudflare(payload){
   }catch(error){manifest.reasons.push(error.message);metadata.run_status='incomplete';metadata.incomplete_reason=[...new Set(manifest.reasons)].join('; ');}
   finally{
     clearTimeout(wholeTimer);
-    const cleanup=await Promise.allSettled([...active].map(terminateGroup));if(cleanup.some(r=>r.status==='rejected')){manifest.status='incomplete';manifest.reasons.push('Native process group cleanup failed');metadata.run_status='incomplete';metadata.incomplete_reason='Native process group cleanup failed';}else cleaned=true;
+    const cleanup=await Promise.allSettled([...active].map(async pid=>{await terminateGroup(pid);active.delete(pid);}));if(cleanup.some(r=>r.status==='rejected')){manifest.status='incomplete';manifest.reasons.push('Native process group cleanup failed');metadata.run_status='incomplete';metadata.incomplete_reason='Native process group cleanup failed';}else cleaned=active.size===0;
     for(const [signal,handler]of handlers)process.removeListener(signal,handler);
     try{
       manifest.copyAfter=await sourceManifest(copy);manifest.originalAfter=await sourceManifest(payload.target);
       const after=await verifySourcePin('cloudflare',options);if(!sameInputs(inputs,manifest.copyAfter)||!sameInputs(inputs,manifest.originalAfter)||!sameInputs(instructions,after))throw new Error('Source preservation or pinned instruction verification failed');
     }catch(e){manifest.status='incomplete';manifest.reasons.push(e.message);metadata.run_status='incomplete';metadata.incomplete_reason=e.message;}
     if(manifest.status!=='complete'){metadata.run_status='incomplete';metadata.incomplete_reason=[...new Set(manifest.reasons)].join('; ');}
-    await save();delete manifest.nativeEnvironment;manifest.endedAt=new Date().toISOString();
-    for(const file of manifest.retainedFiles)try{manifest.preRedactionHashes[file]=sha256(await safeRead(join(payload.artifactDir,file)));}catch{manifest.status='incomplete';manifest.reasons.push(`Missing retained role evidence ${file}`);}
-    await atomicWriteFile(join(payload.artifactDir,'execution-manifest.json'),json(manifest));
-    // Staging deletion occurs only after every owned process group is dead.
-    if(cleaned)await rm(stage,{recursive:true,force:true});
+    try{
+      try{await save();}catch(error){manifest.status='incomplete';manifest.reasons.push(`Final supervisor save failed: ${error.message}`);metadata.run_status='incomplete';metadata.incomplete_reason=[...new Set(manifest.reasons)].join('; ');}
+      delete manifest.nativeEnvironment;manifest.endedAt=new Date().toISOString();
+      for(const file of manifest.retainedFiles)try{manifest.preRedactionHashes[file]=sha256(await safeRead(join(payload.artifactDir,file)));}catch{manifest.status='incomplete';manifest.reasons.push(`Missing retained role evidence ${file}`);}
+      await atomicWriteFile(join(payload.artifactDir,'execution-manifest.json'),json(manifest));
+    }finally{
+      // Publication failures cannot skip cleanup of confirmed-dead groups.
+      if(cleaned)await rm(stage,{recursive:true,force:true});
+    }
   }
   return manifest.status==='complete'?0:signalState.code||1;
 }

@@ -20,16 +20,24 @@ export function nativeOptions(id,value){
   return options;
 }
 export const sha256=value=>createHash('sha256').update(value).digest('hex');
-export async function safeRead(file,limit=20*1024*1024){
+function sameFileState(a,b){return ['dev','ino','mode','nlink','size','mtimeMs','ctimeMs'].every(key=>a[key]===b[key]);}
+async function readRegularFile(file,limit){
+  if(!Number.isSafeInteger(limit)||limit<0)throw new Error('Invalid bounded read limit');
   await assertSafeDirectory(resolve(file,'..'));
   const handle=await open(file,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
   try{
     const before=await handle.stat();if(!before.isFile()||before.nlink!==1||before.size>limit)throw new Error('Unsafe or oversized regular file');
-    const data=await handle.readFile();const after=await handle.stat();
-    if(data.length>limit||before.ino!==after.ino||before.size!==after.size||before.mtimeMs!==after.mtimeMs)throw new Error('File changed during bounded read');
-    return data;
+    if(!sameFileState(before,await lstat(file)))throw new Error('File changed during bounded read');
+    // One extra byte detects growth, but even a continuously growing file cannot
+    // make the descriptor read or allocate beyond its initial size plus one.
+    const buffer=Buffer.alloc(before.size+1);let length=0;
+    while(length<buffer.length){const {bytesRead}=await handle.read(buffer,length,buffer.length-length,length);if(!bytesRead)break;length+=bytesRead;}
+    const after=await handle.stat();await assertSafeDirectory(resolve(file,'..'));
+    if(length!==before.size||!sameFileState(before,after)||!sameFileState(before,await lstat(file)))throw new Error('File changed during bounded read');
+    return {data:buffer.subarray(0,length),stat:before};
   }finally{await handle.close();}
 }
+export async function safeRead(file,limit=20*1024*1024){return (await readRegularFile(file,limit)).data;}
 export async function sourceManifest(root){
   await assertSafeDirectory(root);const records=[];let total=0;
   async function walk(dir){for(const entry of (await readdir(dir,{withFileTypes:true})).sort((a,b)=>a.name.localeCompare(b.name))){
@@ -118,15 +126,46 @@ export function parseAnthropicDocument(doc,{copyTarget,inputs,artifactDir}){
 }
 export async function verifySourcePin(id,options){
   if(options.revision!==PINS[id])throw new Error('Unsupported official source pin');
-  await assertSafeDirectory(options.skillRoot);
-  const git=async args=>(await execute('git',['--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null','-C',options.skillRoot,...args],{timeout:10000,maxBuffer:1024*1024,env:{PATH:process.env.PATH,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null'}})).stdout.trim();
-  if(await git(['rev-parse','HEAD'])!==PINS[id]||await git(['status','--porcelain','--untracked-files=all']))throw new Error('Official source checkout must match clean pinned revision');
-  const paths=id==='cloudflare'?(await readdir(join(options.skillRoot,'skills/security-audit'))).filter(x=>/\.(md|json|cjs)$/.test(x)&&!x.includes('.test.')).map(x=>`skills/security-audit/${x}`):['.claude/settings.json','.claude/skills/vuln-scan/SKILL.md'];
-  const instructions=[];for(const path of paths){const data=await safeRead(join(options.skillRoot,path),2*1024*1024);instructions.push({path,sha256:sha256(data)});}
-  if(id==='anthropic'){const settings=JSON.parse((await safeRead(join(options.skillRoot,'.claude/settings.json'))).toString());if(JSON.stringify(settings)!==JSON.stringify({env:{ANTHROPIC_CUSTOM_HEADERS:'anthropic-cyber-runbook: skills'}}))throw new Error('Unsupported pinned project settings');}
+  const root=await assertSafeDirectory(options.skillRoot);
+  const git=async args=>(await execute('git',['--no-replace-objects','--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null','-C',root,...args],{timeout:10000,maxBuffer:2*1024*1024,env:{PATH:process.env.PATH,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1'}})).stdout;
+  if((await git(['rev-parse','--show-toplevel'])).trim()!==root||(await git(['rev-parse','HEAD'])).trim()!==PINS[id])throw new Error('Official source checkout must match pinned revision');
+  if((await git(['for-each-ref','--format=%(refname)','refs/replace/'])).trim())throw new Error('Official source replacement refs are unsupported');
+  const tree=await git(['ls-tree','-r','-z','--full-tree',PINS[id]]),tracked=new Map(),directories=new Set();
+  for(const entry of tree.split('\0').filter(Boolean)){
+    const match=/^(100644|100755) blob ([0-9a-f]{40})\t(.+)$/s.exec(entry);
+    if(!match)throw new Error('Unsupported pinned source tree entry');
+    const [,mode,oid,path]=match,parts=path.split('/');
+    if(parts.some(part=>!part||part==='.'||part==='..'||part==='.git'||part.includes('\\'))||tracked.has(path))throw new Error('Unsupported pinned source path');
+    tracked.set(path,{mode,oid});for(let i=1;i<parts.length;i++)directories.add(parts.slice(0,i).join('/'));
+  }
+  if(!tracked.size)throw new Error('Official pinned source tree is empty');
+  const files=new Map();let total=0;
+  async function walk(dir){
+    for(const entry of await readdir(dir,{withFileTypes:true})){
+      if(dir===root&&entry.name==='.git')continue;
+      const file=join(dir,entry.name),path=relative(root,file).split('\\').join('/');
+      if(entry.isDirectory()){if(!directories.has(path))throw new Error('Unexpected official source directory');await walk(file);continue;}
+      const expected=tracked.get(path);if(!entry.isFile()||!expected)throw new Error('Unexpected or unsupported official source file');
+      const {data,stat}=await readRegularFile(file,20*1024*1024);total+=data.length;
+      if(files.size>=10000||total>100*1024*1024)throw new Error('Official source size limit exceeded');
+      const oid=createHash('sha1').update(`blob ${data.length}\0`).update(data).digest('hex');
+      if(oid!==expected.oid||Boolean(stat.mode&0o111)!==(expected.mode==='100755'))throw new Error('Official source bytes or executable mode differ from pinned tree');
+      files.set(path,data);
+    }
+  }
+  // This authenticates a point-in-time checkout, including files outside the
+  // instruction subset, without index flags, status, attributes or clean filters.
+  // Git/PATH, local repository metadata and the same-user host remain trusted;
+  // subsequent hostile writes cannot be made atomic with later code execution.
+  await walk(root);if(files.size!==tracked.size)throw new Error('Official source files missing from pinned tree');
+  if((await git(['rev-parse','HEAD'])).trim()!==PINS[id]||(await git(['for-each-ref','--format=%(refname)','refs/replace/'])).trim())throw new Error('Official source revision changed during verification');
+  const paths=id==='cloudflare'?[...files.keys()].filter(path=>/^skills\/security-audit\/[^/]+\.(md|json|cjs)$/.test(path)&&!path.includes('.test.')):['.claude/settings.json','.claude/skills/vuln-scan/SKILL.md'];
+  const instructions=[];for(const path of paths){const data=files.get(path);if(!data||data.length>2*1024*1024)throw new Error('Missing or oversized pinned instruction');instructions.push({path,sha256:sha256(data)});}
+  if(id==='anthropic'){const settings=JSON.parse(files.get('.claude/settings.json').toString());if(JSON.stringify(settings)!==JSON.stringify({env:{ANTHROPIC_CUSTOM_HEADERS:'anthropic-cyber-runbook: skills'}}))throw new Error('Unsupported pinned project settings');}
   return instructions.sort((a,b)=>a.path.localeCompare(b.path));
 }
 export async function runOfficialValidators(options,artifactDir){
+  await verifySourcePin('cloudflare',options);
   const results=[];for(const [script,file] of [['validate-findings.cjs','findings.json'],['validate-coverage-ledger.cjs','coverage-ledger.json']]){
     try{const result=await execute(process.execPath,[join(options.skillRoot,'skills/security-audit',script),join(artifactDir,file)],{timeout:10000,maxBuffer:256*1024});results.push({script,exitCode:0,stdout:result.stdout.trim()});}catch(error){results.push({script,exitCode:typeof error.code==='number'?error.code:1,stderr:String(error.stderr??'validator failed').slice(0,10000)});}
   }return results;
