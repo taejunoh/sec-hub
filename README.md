@@ -1,6 +1,8 @@
 # Sec Hub
 
-> 현재 0.2.0 소스에는 공식 스킬 실행기가 구현되어 있지만, **7개 전체 실제 실행 검증은 미완료**입니다. [진행 상태와 외부 실행 조건](verification/SEVEN-TOOL-STATUS.md)을 확인하세요. 완료 검증된 설치 패키지는 0.1.1입니다. Cloudflare와 코드 작업은 지금 계속 진행하며, Anthropic 실제 실행만 확인된 주간 사용량 한도 해제 이후로 보류합니다.
+> 현재 0.2.0 소스에는 공식 스킬 실행기가 구현되어 있지만, **7개 전체 실제 실행 검증은 미완료**입니다. 다섯 기존 CLI와 Cloudflare의 엄격한 부분 집계는 검증됐고 Anthropic이 남아 있습니다. 완료 검증된 설치 패키지는 0.1.1입니다. [진행 상태](verification/SEVEN-TOOL-STATUS.md)와 [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md)을 확인하세요.
+
+Cloudflare 실행은 정적 source-only quick coverage로, 두 개의 미확정 후보와 unknown 심각도를 기록했습니다. SARIF 스키마·인증정보 패턴 검사와 HTML·증거 링크 QA를 완료했습니다. 0.2.0의 7개 검증 완료나 동적 악용 확인을 뜻하지는 않습니다. 활성화된 1회 후속 작업은 2026년 10월 29일 오전 6:10(뉴욕 시간)에 Anthropic native canary, 정적 검사, 최종 집계만 수행합니다.
 
 Sec Hub는 로컬 저장소에 설치된 보안 검사기를 실행하고, 결과를 JSON, SARIF 2.1.0, 단일 HTML 보고서로 저장하는 Node.js CLI입니다. Node.js 22 이상과 내장 모듈만 사용합니다.
 
