@@ -1,10 +1,10 @@
 # Sec Hub
 
-> 현재 0.2.0 소스에는 공식 스킬 실행기가 구현되어 있지만, **7개 전체 실제 실행 검증은 미완료**입니다. 다섯 기존 CLI와 Cloudflare의 엄격한 부분 집계는 검증됐고 Anthropic이 남아 있습니다. 완료 검증된 설치 패키지는 0.1.1입니다. [진행 상태](verification/SEVEN-TOOL-STATUS.md)와 [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md)을 확인하세요.
+> 현재 0.2.1은 기존 native review의 후보 20개를 검토하고 수정한 새 review build입니다. 13개 기능 결함을 수정했고 Node 24 전체 자동 테스트 315/315개가 통과했습니다. 우선순위 수정 25개 focused test와 중간 우선순위 49개 명세 회귀, 208개 bounded citation 검사, 36개 품질 검사도 통과했습니다. 나머지 7개는 동작 결함으로 확인되지 않은 스타일/죽은 코드 권고여서 이번 수정 범위에서 제외했습니다. [Review 20 평가](verification/review-20/REVIEW.md), [기계 판독 평가](verification/review-20/assessment.json), [HTML 요약](verification/review-20/assessment.html)을 확인하세요.
 
-Cloudflare 실행은 정적 source-only quick coverage로, 두 개의 미확정 후보와 unknown 심각도를 기록했습니다. SARIF 스키마·인증정보 패턴 검사와 HTML·증거 링크 QA를 완료했습니다. 0.2.0의 7개 검증 완료나 동적 악용 확인을 뜻하지는 않습니다. 활성화된 1회 후속 작업은 2026년 10월 29일 오전 6:10(뉴욕 시간)에 Anthropic native canary, 정적 검사, 최종 집계만 수행합니다.
+기존 native 감사는 그대로 `completed_with_errors`인 부분 결과입니다. 원본 20개 코멘트와 native 증거는 변경하지 않았으며, 감사가 미완료된 파일과 초과된 토큰 예산도 그대로 남아 있습니다. 이 review build와 로컬 회귀 결과는 새 native 검사, 취약점 부재 확인, 또는 7개 통합 도구 완료를 뜻하지 않습니다. 통합은 기존과 같이 6/7이며 Anthropic 검증은 보류 중입니다. [7개 도구 진행 상태](verification/SEVEN-TOOL-STATUS.md)와 [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md)를 확인하세요.
 
-추가 구현한 비교 CLI·CI 게이트와 읽기 전용 로컬 대시보드는 자동 테스트 269개와 실제 브라우저 동작을 확인했습니다. 0.2.0 검토용 패키지를 제공하지만, 자체 감사의 최종 OCR 결과는 예산 초과로 부분 완료이며 후보 20개가 남았습니다. 상위 후보 3개는 제한된 재현과 조건을 기록했습니다. Codex Security와 후속 Cloudflare의 제공자 정책 차단, Anthropic 보류를 성공으로 바꾸지 않았습니다. 저장소의 [자체 검사 최종 요약](verification/self-audit-validation/FINAL.md)과 [남은 후보](verification/self-audit-validation/FINAL-CANDIDATES.md)를 확인하세요. 이 실행 증거들은 npm 패키지에 포함되지 않습니다.
+기존 Cloudflare 실행은 정적 source-only quick coverage로, 두 개의 미확정 후보와 unknown 심각도를 기록했습니다. SARIF 스키마·인증정보 패턴 검사와 HTML·증거 링크 QA를 완료했습니다. 이는 7개 검증 완료나 동적 악용 확인을 뜻하지 않습니다. 활성화된 1회 후속 작업은 2026년 10월 29일 오전 6:10(뉴욕 시간)에 Anthropic native canary, 정적 검사, 최종 집계만 수행합니다.
 
 Sec Hub는 로컬 저장소에 설치된 보안 검사기를 실행하고, 결과를 JSON, SARIF 2.1.0, 단일 HTML 보고서로 저장하는 Node.js CLI입니다. Node.js 22 이상과 내장 모듈만 사용합니다.
 
@@ -20,7 +20,7 @@ node bin/sec-hub.mjs --help
 
 `npm install`은 런타임 의존성을 추가하지 않습니다. 전역 명령이 필요하면 선택적으로 `npm link`를 실행할 수 있습니다. 기본 사용은 `node bin/sec-hub.mjs`입니다.
 
-npm 패키지에는 CLI, 런타임, 예시와 README만 포함됩니다. 유지 관리 스크립트는 저장소 checkout에서만 사용할 수 있으며 설치 패키지에는 포함되지 않습니다. 실행 증거는 저장소의 `verification/`에 남으며, tarball 생성은 0.2.0의 7개 도구 검증 완료를 뜻하지 않습니다.
+npm 패키지에는 CLI, 런타임, 예시와 README만 포함됩니다. 유지 관리 스크립트는 저장소 checkout에서만 사용할 수 있으며 설치 패키지에는 포함되지 않습니다. 실행 증거는 저장소의 `verification/`에 남습니다. 0.2.1은 검토용 빌드이며 tarball 생성이 7개 도구 검증 완료를 뜻하지는 않습니다.
 
 ## 명령
 

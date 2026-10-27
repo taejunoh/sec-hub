@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { run } from '../src/agents/native-wrapper.mjs';
 
-const repo = dirname(dirname(fileURLToPath(import.meta.url))); 
+const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 const codexWrapper = join(repo, 'src/adapters/codex-wrapper.mjs');
 
 function child(command, args, options = {}) {
