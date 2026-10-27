@@ -4,6 +4,8 @@
 
 Cloudflare 실행은 정적 source-only quick coverage로, 두 개의 미확정 후보와 unknown 심각도를 기록했습니다. SARIF 스키마·인증정보 패턴 검사와 HTML·증거 링크 QA를 완료했습니다. 0.2.0의 7개 검증 완료나 동적 악용 확인을 뜻하지는 않습니다. 활성화된 1회 후속 작업은 2026년 10월 29일 오전 6:10(뉴욕 시간)에 Anthropic native canary, 정적 검사, 최종 집계만 수행합니다.
 
+추가 구현한 비교 CLI·CI 게이트와 읽기 전용 로컬 대시보드는 자동 테스트 269개와 실제 브라우저 동작을 확인했습니다. 0.2.0 검토용 패키지를 제공하지만, 자체 감사의 최종 OCR 결과는 예산 초과로 부분 완료이며 후보 20개가 남았습니다. 상위 후보 3개는 제한된 재현과 조건을 기록했습니다. Codex Security와 후속 Cloudflare의 제공자 정책 차단, Anthropic 보류를 성공으로 바꾸지 않았습니다. 저장소의 [자체 검사 최종 요약](verification/self-audit-validation/FINAL.md)과 [남은 후보](verification/self-audit-validation/FINAL-CANDIDATES.md)를 확인하세요. 이 실행 증거들은 npm 패키지에 포함되지 않습니다.
+
 Sec Hub는 로컬 저장소에 설치된 보안 검사기를 실행하고, 결과를 JSON, SARIF 2.1.0, 단일 HTML 보고서로 저장하는 Node.js CLI입니다. Node.js 22 이상과 내장 모듈만 사용합니다.
 
 검사 대상 저장소의 스크립트를 자동 실행하거나 도구를 설치하지 않습니다. AI 검사기는 `--ai`와 명시적인 설정이 필요합니다. 코드 업로드 가능성이 있는 도구는 실행 전 각 도구의 정책과 설정을 확인하세요. Sec Hub는 자동 패치를 적용하지 않으며 하위 프로세스를 샌드박스라고 부르지 않습니다.

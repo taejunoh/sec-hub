@@ -123,6 +123,9 @@ footer { display: flex; justify-content: space-between; gap: 1rem; padding: .9re
   .catalog { position: static; }
   .workspace { padding: 1rem; }
   .section-heading { align-items: flex-start; }
+  .workspace-title { flex-wrap: wrap; }
+  .workspace-title > div { flex: 1 1 12rem; min-width: min(100%, 12rem); }
+  .workspace-title .selection-mark { flex: 1 1 100%; max-width: 100%; text-align: left; }
   .record-summary { grid-template-columns: 1fr 1fr; }
   .compare-controls { grid-template-columns: 1fr; }
   .compare-controls .primary-button { min-height: 42px; }
