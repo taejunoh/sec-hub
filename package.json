@@ -4,6 +4,7 @@
   "description": "Local security scanner orchestration with explicit coverage and provenance",
   "type": "module",
   "private": true,
+  "files": ["bin/", "src/", "scripts/", "examples/", "README.md"],
   "engines": { "node": ">=22" },
   "bin": { "sec-hub": "bin/sec-hub.mjs" },
   "scripts": { "test": "node --test test/*.test.mjs", "doctor": "node bin/sec-hub.mjs doctor" },

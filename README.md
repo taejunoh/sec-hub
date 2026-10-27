@@ -16,6 +16,8 @@ node bin/sec-hub.mjs --help
 
 `npm install`은 런타임 의존성을 추가하지 않습니다. 전역 명령이 필요하면 선택적으로 `npm link`를 실행할 수 있습니다. 기본 사용은 `node bin/sec-hub.mjs`입니다.
 
+npm 패키지에는 CLI, 런타임, 스크립트, 예시와 README만 포함됩니다. 실행 증거는 저장소의 `verification/`에 남으며, tarball 생성은 0.2.0의 7개 도구 검증 완료를 뜻하지 않습니다.
+
 ## 명령
 
 CLI adapter 다섯 가지와 공식 agent workflow 두 가지를 지원합니다. CLI adapter: Google OSV Scanner (`osv`), NVIDIA SkillSpector (`skillspector`), OpenAI Codex Security (`codex-security`), Alibaba Open Code Review (`open-code-review`), OpenAI PHP2Shell Checker (`php2shell`). 공식 agent workflow는 Cloudflare Security Audit (`cloudflare`)와 Anthropic `/vuln-scan` (`anthropic`)입니다. 사용 가능 여부와 필요한 자격 증명은 `doctor` 결과를 확인하세요. `doctor`는 중복 없는 일곱 ID를 반환하고 두 agent의 수동 import 지원은 capability로 표시합니다.
