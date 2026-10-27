@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { runProcess } from './processes.mjs';
 import { createRedactor, redactValue } from './redaction.mjs';
 import { atomicWriteFile, assertSafeDirectory, ensureSafeDirectory } from './safe-io.mjs';
+import { validateAgentOptions } from './config.mjs';
 export { runProcess, createRedactor };
 
 function runDirectoryPath(out) {
@@ -63,6 +64,14 @@ function containsPath(parent,child) {
   return rel===''||(!isAbsolute(rel)&&rel!=='..'&&!rel.startsWith('../')&&!rel.startsWith('..\\'));
 }
 async function preflightNativeLocations(target,out,agents,config) {
+  for(const adapter of agents){
+    const agentOptions=config.tools?.[adapter.id]?.agentOptions;
+    if(agentOptions && (Object.hasOwn(agentOptions,'preparationFrom')||Object.hasOwn(agentOptions,'preparationSha256'))){
+      const preparation=validateAgentOptions(adapter.id,agentOptions);
+      const {preflightPreparationLocations}=await import('./agents/cloudflare-preparation.mjs');
+      await preflightPreparationLocations({...preparation,target,out});
+    }
+  }
   const output=await futureDirectoryPath(out);
   if(containsPath(target,output))throw new Error('Native agent output must be outside the original target');
   for(const adapter of agents){

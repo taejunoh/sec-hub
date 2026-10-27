@@ -3,13 +3,14 @@
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { StringDecoder } from 'node:string_decoder';
-import { mkdir, mkdtemp, writeFile, open, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, open, rm, readdir } from 'node:fs/promises';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { ensureSafeDirectory, atomicWriteFile } from '../safe-io.mjs';
 import { validateAgentOptions } from '../config.mjs';
 import { nativeOptions, PINS, SOURCES, OUTPUTS, safeRead, sha256, sourceManifest, copySources, sameInputs, verifySourcePin, runOfficialValidators } from './validation.mjs';
 import { loadCloudflareContracts, buildRolePrompt, supervisedArgs, reconOutputSchema, supervisedRoleTimeoutMs, SUPERVISED_WALL_TIMEOUT_MS, STRATEGY, LABEL } from './cloudflare-prompts.mjs';
 import { validateRecon, preparePlan, assignHunter, applyHunter, applyCritic, applyVerifier, inspectRoleEvidence, assertObservedPolicy, renderSupervisedReports, officialHelpers, validateRecords } from './supervised-validation.mjs';
+import {inspectCloudflarePreparation,materializeCloudflarePreparation} from './cloudflare-preparation.mjs';
 const execute=promisify(execFile),json=x=>JSON.stringify(x,null,2)+'\n';
 const inside=(parent,child)=>{const p=relative(resolve(parent),resolve(child));return p===''||!p.startsWith('..')&&!isAbsolute(p);};
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -47,12 +48,15 @@ export async function runSupervisedCloudflare(payload){
   if(payload?.id!=='cloudflare'||typeof payload.command!=='string'||!Array.isArray(payload.args)||payload.args.some(s=>typeof s!=='string'))throw new Error('Invalid supervised native input');
   const options=nativeOptions('cloudflare',validateAgentOptions('cloudflare',payload.agentOptions));if(options.strategy!==STRATEGY)throw new Error('Explicit supervised strategy required');
   const instructions=await verifySourcePin('cloudflare',options),c=await loadCloudflareContracts(options.skillRoot),inputs=await sourceManifest(payload.target);if(!inputs.length)throw new Error('Empty source target');
+  const prepared=options.preparationFrom?await inspectCloudflarePreparation({options,target:payload.target,artifactDir:payload.artifactDir,command:payload.command,args:payload.args}):null,charged=prepared?.receipt.chargedAgents??0;
   if(inside(payload.target,options.workRoot)||inside(payload.artifactDir,options.workRoot)||inside(payload.target,payload.artifactDir)||inside(options.workRoot,payload.artifactDir))throw new Error('Supervised work/output paths must be isolated outside target');
   await ensureSafeDirectory(payload.artifactDir);await ensureSafeDirectory(options.workRoot);
+  if(prepared&&(await readdir(payload.artifactDir)).length)throw new Error('Preparation continuation requires a fresh empty raw output directory');
   const stage=await mkdtemp(join(options.workRoot,'sec-hub-supervised-')),copy=join(stage,'target'),runner=join(stage,'runner');await mkdir(runner,{mode:0o700});await copySources(payload.target,copy,inputs);
   const manifest={schema:'sec-hub.native-agent/v1',id:'cloudflare',strategy:STRATEGY,label:LABEL,adapted:true,source:SOURCES.cloudflare,sourceCommit:PINS.cloudflare,instructions,nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,backend:'codex',model:options.model,mode:'supervised-official-security-audit-skill',target:resolve(payload.target),copyTarget:copy,runner,inputs,copyBefore:await sourceManifest(copy),startedAt:new Date().toISOString(),status:'incomplete',reasons:[],invocation:{command:payload.command,args:payload.args},roles:[],retainedFiles:[...OUTPUTS.cloudflare],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
   const metadata={run_id:`supervised-${Date.now()}-${process.pid}`,repo:resolve(payload.target),target:copy,source_ref:`sha256:${sha256(JSON.stringify(inputs))}`,profile:'quick',scope_paths:inputs.map(i=>i.path),budget:{max_agents:options.maxAgents,spent:0,planned_minimum:8},execution_policy:'sandboxed-source-and-local-only',selected_companion_files:[],prior_run_paths:[],shared_file_owners:Object.fromEntries(OUTPUTS.cloudflare.map(f=>[f,'trusted-supervisor'])),run_status:'in_progress',strategy:STRATEGY};
-  const active=new Set(),signalState={code:0},deadline=Date.now()+SUPERVISED_WALL_TIMEOUT_MS,handlers=[];let state=null,cleaned=false;
+  if(prepared){manifest.preparation=prepared.receipt;manifest.retainedFiles.push(...prepared.retainedFiles);metadata.preparation={source_manifest:prepared.receipt.sourceManifestPath,source_manifest_sha256:prepared.receipt.sourceManifestSha256,source_status:prepared.receipt.sourceStatus,charged_agents:charged};if(!sameInputs(manifest.copyBefore,prepared.source.inputs))throw new Error('Continuation source copy differs from preparation inputs');}
+  const active=new Set(),knownThreads=new Set(prepared?.threadIds??[]),signalState={code:0},deadline=Date.now()+SUPERVISED_WALL_TIMEOUT_MS,handlers=[];let state=prepared?.state??null,cleaned=false;
   const stop=code=>{signalState.code=code;const owned=[...active];for(const pid of owned)try{process.kill(-pid,'SIGTERM');}catch{}
     // Outer runProcess escalates at300ms. Kill detached child groups first,
     // retaining this timer even if a leader exits before its descendants.
@@ -61,7 +65,7 @@ export async function runSupervisedCloudflare(payload){
   for(const [signal,code]of [['SIGINT',130],['SIGTERM',143]]){const handler=()=>stop(code);process.on(signal,handler);handlers.push([signal,handler]);}
   const wholeTimer=setTimeout(()=>stop(124),SUPERVISED_WALL_TIMEOUT_MS);wholeTimer.unref();
   const save=async()=>{
-    metadata.budget.spent=manifest.roles.length;
+    metadata.budget.spent=charged+manifest.roles.length;if(prepared){metadata.budget.reused_agents=charged;metadata.budget.new_agents=manifest.roles.length;}
     const values={'run-metadata.json':json(metadata),'architecture.md':state?.architecture??'Architecture was not established; run incomplete.\n','coverage-ledger.json':json(state?.ledger??[]),'findings.json':json(state?.records??[]),...renderSupervisedReports(state,metadata)};
     for(const [name,value]of Object.entries(values))await atomicWriteFile(join(payload.artifactDir,name),value);
     // Official ledger validation on every trusted parent update, including seed.
@@ -70,10 +74,10 @@ export async function runSupervisedCloudflare(payload){
   };
   async function invoke(role,ownerId,extra={}){
     if(signalState.code||Date.now()>=deadline)throw new Error('Supervised workflow interrupted or wall-time exceeded');
-    if(manifest.roles.length>=options.maxAgents)throw new Error('Strict total-agent budget exhausted');
-    const agentId=`${ownerId}-${manifest.roles.length+1}`,dir=join(payload.artifactDir,'roles',agentId);
+    if(charged+manifest.roles.length>=options.maxAgents)throw new Error('Strict total-agent budget exhausted');
+    const agentId=`${ownerId}-${charged+manifest.roles.length+1}`,dir=join(payload.artifactDir,'roles',agentId);
     const expected=buildRolePrompt(c,{role,agentId:ownerId,target:copy,runner,...extra}),record={role,agentId,ownerId,...(extra.candidate?{fingerprint:extra.candidate.fingerprint}:{}),promptSha256:sha256(expected.prompt),promptBytes:Buffer.byteLength(expected.prompt),sourceBlocks:expected.sourceBlocks,accepted:false};
-    manifest.roles.push(record);metadata.budget.spent=manifest.roles.length;await mkdir(dir,{recursive:true,mode:0o700});
+    manifest.roles.push(record);metadata.budget.spent=charged+manifest.roles.length;await mkdir(dir,{recursive:true,mode:0o700});
     await mkdir(join(runner,'agents',ownerId,'scratch'),{recursive:true,mode:0o700});await mkdir(join(runner,'agents',ownerId,'artifacts'),{recursive:true,mode:0o700});
     for(const name of ['prompt.txt','events.jsonl','stderr.log','response.json'])manifest.retainedFiles.push(`roles/${agentId}/${name}`);
     const schema=reconOutputSchema(role),schemaText=schema?json(schema):null,schemaFile=schema?`roles/${agentId}/output-schema.json`:null;
@@ -83,7 +87,7 @@ export async function runSupervisedCloudflare(payload){
       await runRoleProcess(payload.command,[...payload.args,...supervisedArgs(runner,options,process.execPath,schemaFile?resolve(payload.artifactDir,schemaFile):null)],{cwd:runner,env:manifest.nativeEnvironment,prompt:expected.prompt,dir,record,deadline,active,signalState,onEvent:event=>assertObservedPolicy(event,expected)});
       const events=(await safeRead(join(dir,'events.jsonl'))).toString().split('\n').filter(s=>s.trim()).map(s=>JSON.parse(s));
       const starts=events.filter(e=>e.type==='thread.started');if(starts.length===1)record.threadId=starts[0].thread_id;
-      if(record.threadId&&manifest.roles.some(r=>r!==record&&r.threadId===record.threadId))throw new Error('Native fresh thread identity reused');
+      if(record.threadId&&(knownThreads.has(record.threadId)||manifest.roles.some(r=>r!==record&&r.threadId===record.threadId)))throw new Error('Native fresh thread identity reused');if(record.threadId)knownThreads.add(record.threadId);
       const finalText=events.filter(e=>e.type==='item.completed'&&e.item?.type==='agent_message').at(-1)?.item.text;
       await writeFile(join(dir,'response.json'),typeof finalText==='string'?finalText:'null',{flag:'wx',mode:0o600});
       const proof=inspectRoleEvidence(events,record,expected,c);record.accepted=true;return {response:proof.response,record};
@@ -97,6 +101,7 @@ export async function runSupervisedCloudflare(payload){
     }
   }
   try{
+    if(prepared)await materializeCloudflarePreparation(prepared,payload.artifactDir);
     await save();
     // Fund a real hunter and an independent candidate verifier before launching
     // any recon; zero candidates legitimately spend seven rather than eight.
@@ -104,10 +109,13 @@ export async function runSupervisedCloudflare(payload){
     const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:stage,LANG:'en_US.UTF-8'};if(process.env.CODEX_HOME)env.CODEX_HOME=process.env.CODEX_HOME;
     // Environment has authentication discovery paths only; no auth file is read.
     const version=await execute(payload.command,[...payload.args,'--version'],{cwd:runner,env,timeout:10000,maxBuffer:64*1024});manifest.backendVersion=(version.stdout||version.stderr).trim().slice(0,500);manifest.nativeEnvironment=env;
+    if(prepared&&manifest.backendVersion!==prepared.receipt.backendVersion)throw new Error('Native backend version changed since preparation');
+    if(!prepared){
     const reconResults=await Promise.allSettled(['recon-1a','recon-1b','recon-1c','recon-1d'].map(role=>invoke(role,role)));
     const recon=[];for(let i=0;i<reconResults.length;i++){const item=reconResults[i];if(item.status==='rejected')throw item.reason;try{validateRecon(item.value.response,`recon-1${'abcd'[i]}`,inputs);}catch(e){item.value.record.accepted=false;item.value.record.failure=e.message;throw e;}recon.push(item.value.response);}
     const planned=await invoke('planner','planner',{recon});
     try{state=preparePlan(planned.response,c,inputs,options.maxAgents,{requireGrouped:true});}catch(e){planned.record.accepted=false;planned.record.failure=e.message;throw e;}
+    }
     metadata.selected_companion_files=state.plan.companion_selection.filter(s=>s.selected).map(s=>s.file);await save();
     for(const a of state.assignments){await mkdir(join(runner,'agents',a.id,'scratch'),{recursive:true,mode:0o700});await mkdir(join(runner,'agents',a.id,'artifacts'),{mode:0o700});assignHunter(state,a,c);await save();}
     const wave=JSON.parse(JSON.stringify(state.ledger)),hunters=await Promise.allSettled(state.assignments.map(a=>invoke('hunter',a.id,{architecture:state.architecture,ledger:wave,units:wave.filter(u=>a.coverageIds.includes(u.coverage_id))})));
@@ -117,9 +125,9 @@ export async function runSupervisedCloudflare(payload){
     try{applyCritic(state,critic.response,c,inputs);}catch(e){critic.record.accepted=false;critic.record.failure=e.message;throw e;}await save();
     for(const fingerprint of [...state.candidates.keys()].sort()){
       let decided=false,lastError;
-      while(!decided&&manifest.roles.length<options.maxAgents){
+      while(!decided&&charged+manifest.roles.length<options.maxAgents){
         const candidate=state.candidates.get(fingerprint),units=state.ledger.filter(u=>u.result_fingerprints.includes(fingerprint));let v;
-        try{v=await invoke('verifier',`verifier-${manifest.roles.length+1}`,{architecture:state.architecture,units,candidate,checks:units.flatMap(u=>u.local_checks)});applyVerifier(state,v.response,fingerprint,c,inputs,v.record.ownerId);decided=true;await save();}catch(e){lastError=e;if(v){v.record.accepted=false;v.record.failure=e.message;}if(e.fatalPolicy)throw e;if(signalState.code)break;}
+        try{v=await invoke('verifier',`verifier-${charged+manifest.roles.length+1}`,{architecture:state.architecture,units,candidate,checks:units.flatMap(u=>u.local_checks)});applyVerifier(state,v.response,fingerprint,c,inputs,v.record.ownerId);decided=true;await save();}catch(e){lastError=e;if(v){v.record.accepted=false;v.record.failure=e.message;}if(e.fatalPolicy)throw e;if(signalState.code)break;}
       }
       if(!decided)manifest.reasons.push(lastError?.message??`Independent verifier budget exhausted for ${fingerprint}`);
     }

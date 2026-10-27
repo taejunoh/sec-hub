@@ -109,6 +109,12 @@ Cloudflare는 pin `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`의 agent-neutral se
 
 `supervised-codex-workers`의 model-authored grouped exclusion catalog는 알려진 ID와 unit reference를 포함하며, 기존 full coverage 의미 검증과 hunter map에 그대로 확장한 뒤 검사합니다. source-only/known-fixture 정책은 계속 적용되고 의미 검증을 줄이지 않습니다. Recon 단계의 Codex `--output-schema` canary는 provider가 structured output schema를 받는지 확인할 뿐, source 검사나 전체 workflow 증거가 아닙니다. 각 role에는 별도 schema가 적용되며 recon canary 결과를 다른 role에 일반화하지 않습니다. malformed native JSON은 거부하며 문법을 자동 수정하지 않습니다. source claim을 만들어 내거나 자동 복구하지 않습니다. planner 제한은 최대 600초, 다른 역할은 최대 300초이며 전체 실행은 호출자의 남은 deadline과 최대 1800초에 묶입니다. `maxAgents` 최소 8은 역할 예약 조건이지 충분한 실행 예산의 보장은 아닙니다. 기본 최대 10은 이 작업에 명시적으로 높여야 할 수 있습니다. policy gate는 streamed text를 읽은 뒤 금지된 외부 SKILL 내용이나 정체 상태를 조기에 감지하지만, 파일시스템 접근을 예방하는 격리는 아닙니다. 이 실행은 vendor-certified가 아니며 source-only quick coverage입니다.
 
+새 검사는 `preparationFrom`과 `preparationSha256`을 모두 생략합니다. 4개 recon과 planner가 native exit 0 및 schema-supported 출력으로 끝난 뒤 host ledger 정렬에서 실패한 이전 실행만 준비 단계 복구 대상으로 지원합니다. Cloudflare의 명시적 `strategy: "supervised-codex-workers"` 설정에 `preparationFrom: "/absolute/old-run/raw/cloudflare/execution-manifest.json"`과 그 원본 manifest의 SHA-256인 `preparationSha256: "<64자리 소문자 hex>"`를 함께 추가하고 아래처럼 새 출력 경로로 실행합니다. 이는 수동 import나 일반 resume가 아닙니다. 이전 실패 실행은 수정하지 않으며 같은 대상·pin·native 설정(예산 `maxAgents` 포함), 원본 artifact hash·실행 identity·소스 증거 및 현재 `preparePlan` 검증을 모두 다시 확인합니다. 재사용한 5개 역할도 새 예산에 포함하며 hunter·critic·verifier는 새로 실행합니다. receipt는 여러 실행 cohort의 출처를 보존하며 단일 신규 실행으로 표시하지 않습니다. 재귀 연결, 뒤 단계 재사용, native 실패나 누락·변조된 준비 증거는 거부합니다. 위의 source-only quick/known-fixture 및 text를 읽은 뒤 적용되는 policy gate 한계는 동일합니다.
+
+```sh
+node bin/sec-hub.mjs scan /path/to/repository --ai --tools cloudflare --config /absolute/preparation-reuse.config.json --timeout 1800 --out /absolute/new-preparation-run
+```
+
 JSON, HTML 및 SARIF의 tool execution 기록에는 mode, backend, source pin, 정적 검토 한계와 동적 검증 상태가 포함됩니다. 서로 다른 실행을 결합한 보고서는 aggregate 출처와 원본 실행 이력을 보존하며 단일 실행으로 표시하지 않습니다. 기존 다섯 CLI 결과와 두 새 workflow의 일곱 도구 검증 방법 및 실제 완료 여부는 새 검증 기록을 확인하세요.
 
 보존된 다섯 CLI aggregate와 새 native 실행을 재검증해 결합하려면 아래 명령을 사용합니다. `--agents`는 반복할 수 있어 Cloudflare와 Anthropic을 서로 다른 실행 폴더에서 받을 수 있습니다. 모든 입력은 절대 경로여야 하며 `--out`은 새 외부 폴더여야 합니다. 각 agent 입력은 선택한 도구가 실제 완료된 원본 로컬 실행이어야 하고, 같은 도구의 중복 완료나 실패 실행은 허용하지 않습니다. helper는 대상 해시·출처·최종 redaction 이후 해시·native 실행 증거를 다시 검증합니다.

@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { resolve, isAbsolute } from 'node:path';
+import { resolve, isAbsolute, normalize } from 'node:path';
 
 const scanFields = {
   'codex-security': { auth: ['chatgpt','api-key','auto'], model: 'string', effort: ['low','medium','high','xhigh'], maxCost: 'positive', maxTimeMinutes: 'positive' },
@@ -24,7 +24,7 @@ export function validateScanOptions(id, value) {
 
 
 const agentFields = {
-  cloudflare: { strategy:['native-collab','supervised-codex-workers'], skillRoot:'absolute', revision:'revision', model:'string', workRoot:'absolute', effort:['low','medium','high','xhigh'], profile:['quick'], maxAgents:'agents' },
+  cloudflare: { strategy:['native-collab','supervised-codex-workers'], preparationFrom:'preparationManifest', preparationSha256:'sha256', skillRoot:'absolute', revision:'revision', model:'string', workRoot:'absolute', effort:['low','medium','high','xhigh'], profile:['quick'], maxAgents:'agents' },
   anthropic: { skillRoot:'absolute', revision:'revision', model:'string', workRoot:'absolute', maxTurns:'integer', maxBudgetUsd:'positive', mode:['vuln-scan'], single:'true', noScore:'true' },
 };
 export function validateAgentOptions(id, value) {
@@ -35,6 +35,8 @@ export function validateAgentOptions(id, value) {
     const type=fields[key];
     const clean=typeof item==='string' && item.trim().length>0 && !/[\x00-\x1f\x7f]/.test(item) && !item.startsWith('-');
     const valid=Array.isArray(type)?type.includes(item)
+      :type==='preparationManifest'?clean && item===item.trim() && isAbsolute(item) && normalize(item)===item && item.endsWith('/raw/cloudflare/execution-manifest.json')
+      :type==='sha256'?typeof item==='string' && /^[a-f0-9]{64}$/.test(item)
       :type==='absolute'?clean && isAbsolute(item)
       :type==='revision'?typeof item==='string' && /^[a-f0-9]{40}$/.test(item)
       :type==='string'?clean
@@ -44,6 +46,8 @@ export function validateAgentOptions(id, value) {
       :type==='true'?item===true:false;
     if(!valid)throw new Error('Invalid config '+id+'.agentOptions.'+key);
   }
+  if((value.preparationFrom!==undefined)!==(value.preparationSha256!==undefined))throw new Error('Invalid config '+id+'.agentOptions: preparationFrom and preparationSha256 are required together');
+  if(value.preparationFrom!==undefined && value.strategy!=='supervised-codex-workers')throw new Error('Invalid config '+id+'.agentOptions.preparationFrom: requires supervised-codex-workers');
   return {...value};
 }
 

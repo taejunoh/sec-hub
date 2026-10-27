@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, symlink, mkdir, lstat } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, symlink, mkdir, lstat, readdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -300,4 +301,43 @@ test('native output and workRoot preflight rejects target mutations before any m
   const out=join(directory,'safe-output');
   await assert.rejects(runner.runScan({target,out,ai:true,tools:['cloudflare'],config:{tools:{cloudflare:{command:'unused',agentOptions:{workRoot:join(alias,'new-work')}}}},adapters:[native]}),/symbolic link|outside|target/i);
   await assert.rejects(lstat(out),/ENOENT/);assert.deepEqual(await snapshot(),before);
+});
+
+test('preparation preflight rejects unsafe source locations and hashes before any mkdir or native check',async()=>{
+  const directory=await temp(),old=join(directory,'old run'),raw=join(old,'raw','cloudflare'),target=join(directory,'target');
+  await mkdir(raw,{recursive:true});await mkdir(target);await writeFile(join(target,'source.mjs'),'export const safe=true;\n');
+  const preparationFrom=join(raw,'execution-manifest.json'),bytes='{"old":"immutable"}\n';await writeFile(preparationFrom,bytes);
+  const preparationSha256=createHash('sha256').update(bytes).digest('hex');
+  const aliasedRoot=join(directory,'old-alias');await symlink(old,aliasedRoot,'dir');
+  const linkedLayout=join(directory,'linked-run','raw','cloudflare');await mkdir(linkedLayout,{recursive:true});await symlink(preparationFrom,join(linkedLayout,'execution-manifest.json'));
+  const nestedTarget=join(old,'source-target');await mkdir(nestedTarget);
+  const before={entries:await readdir(old,{recursive:true}),bytes:await readFile(preparationFrom,'utf8')};
+  let checked=false;const native=fakeAdapter('cloudflare',{kind:'agent',requiresAI:true,check:async()=>{checked=true;return {available:false};}});
+  const cases=[
+    {preparationFrom:join(directory,'missing','raw','cloudflare','execution-manifest.json')},
+    {preparationSha256:'0'.repeat(64)},
+    {preparationFrom:join(linkedLayout,'execution-manifest.json')},
+    {preparationFrom:join(aliasedRoot,'raw','cloudflare','execution-manifest.json')},
+    {out:join(old,'new-output')},
+    {out:join(old,'..nested-output')},
+    {out:directory,existingOut:true},
+    {target:nestedTarget},
+    {target:directory},
+    {workRoot:join(old,'new-work')},
+    {workRoot:join(old,'..nested-work')},
+    {workRoot:old},
+    {workRoot:directory},
+  ];
+  for(const [index,item] of cases.entries()){
+    const out=item.out??join(directory,`new-output-${index}`),scanTarget=item.target??target,workRoot=item.workRoot??join(directory,`new-work-${index}`);
+    const agentOptions={strategy:'supervised-codex-workers',preparationFrom,preparationSha256,workRoot,...Object.fromEntries(Object.entries(item).filter(([key])=>['preparationFrom','preparationSha256'].includes(key)))};
+    await assert.rejects(runner.runScan({target:scanTarget,out,ai:true,tools:['cloudflare'],config:{tools:{cloudflare:{command:'unused',agentOptions}}},adapters:[native]}),/preparation|manifest|symbolic link|overlap|ENOENT/i);
+    assert.equal(checked,false);if(!item.existingOut)await assert.rejects(lstat(out),/ENOENT/);
+    if(!item.workRoot)await assert.rejects(lstat(workRoot),/ENOENT/);
+    assert.deepEqual({entries:await readdir(old,{recursive:true}),bytes:await readFile(preparationFrom,'utf8')},before);
+  }
+  const out=join(directory,'disjoint-output');
+  await runner.runScan({target,out,ai:true,tools:['cloudflare'],config:{tools:{cloudflare:{command:'unused',agentOptions:{strategy:'supervised-codex-workers',preparationFrom,preparationSha256,workRoot:join(directory,'disjoint-work')}}}},adapters:[native]});
+  assert.equal(checked,true);assert.equal((await lstat(out)).isDirectory(),true);
+  assert.deepEqual({entries:await readdir(old,{recursive:true}),bytes:await readFile(preparationFrom,'utf8')},before);
 });

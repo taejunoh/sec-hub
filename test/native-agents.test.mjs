@@ -107,6 +107,30 @@ test('Cloudflare strategy is explicit, defaults to legacy, and rejects unknown b
   for(const invalid of [{strategy:'fake-collab'},{backend:'fake'},{mode:'supervised'}])assert.throws(()=>validateAgentOptions('cloudflare',{...base,...invalid}),/Invalid config/);
   assert.throws(()=>validateAgentOptions('anthropic',{strategy:'supervised-codex-workers'}),/Invalid config/);
 });
+test('preparation reuse accepts only an explicit supervised Cloudflare manifest path',async()=>{
+  const {validateAgentOptions,loadConfig}=await import('../src/config.mjs');
+  const preparationFrom='/old run/raw/cloudflare/execution-manifest.json';
+  const options={strategy:'supervised-codex-workers',preparationFrom,preparationSha256:'a'.repeat(64)};
+  assert.deepEqual(validateAgentOptions('cloudflare',options),options);
+  const root=await mkdtemp(join(tmpdir(),'preparation-config-test-'));
+  try{
+    const path=join(root,'config.json');
+    await writeFile(path,JSON.stringify({tools:{cloudflare:{command:'codex',agentOptions:options}}}));
+    assert.equal((await loadConfig(path)).tools.cloudflare.agentOptions.preparationFrom,preparationFrom);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+test('preparation reuse rejects malformed paths and unsupported strategies or backends',async()=>{
+  const {validateAgentOptions}=await import('../src/config.mjs');
+  const preparationFrom='/old-run/raw/cloudflare/execution-manifest.json',preparationSha256='a'.repeat(64);
+  for(const invalid of ['', ' ', ' '+preparationFrom, preparationFrom+' ', 'relative/raw/cloudflare/execution-manifest.json', null, true, 4, [], {}, '/old-run/raw/cloudflare/execution-manifest.json\0', '/old-run/raw/cloudflare/execution-manifest.json\n', '/old-run/raw/cloudflare/other.json', '/old-run/execution-manifest.json', '/old-run/../old-run/raw/cloudflare/execution-manifest.json']){
+    assert.throws(()=>validateAgentOptions('cloudflare',{strategy:'supervised-codex-workers',preparationFrom:invalid,preparationSha256}),/agentOptions\.preparationFrom/);
+  }
+  for(const invalid of ['', 'a'.repeat(63), 'a'.repeat(65), 'A'.repeat(64), 'g'.repeat(64), null, 4, {}, true])assert.throws(()=>validateAgentOptions('cloudflare',{strategy:'supervised-codex-workers',preparationFrom,preparationSha256:invalid}),/agentOptions\.preparationSha256/);
+  for(const pair of [{preparationFrom},{preparationSha256}])assert.throws(()=>validateAgentOptions('cloudflare',{strategy:'supervised-codex-workers',...pair}),/preparationFrom.*preparationSha256/);
+  for(const strategy of [undefined,'native-collab'])assert.throws(()=>validateAgentOptions('cloudflare',{...(strategy?{strategy}:{}),preparationFrom,preparationSha256}),/preparationFrom/);
+  assert.throws(()=>validateAgentOptions('anthropic',{preparationFrom,preparationSha256}),/agentOptions\.preparationFrom/);
+  assert.throws(()=>validateAgentOptions('cloudflare',{strategy:'supervised-codex-workers',preparationFrom,preparationSha256,nativeBackend:'claude'}),/agentOptions/);
+});
 test('native backend quota diagnosis takes precedence over missing workflow evidence',()=>{
   const events=[{type:'assistant',is_api_error_message:true,error:{status:429,type:'usage_limit_reached',message:'weekly quota exhausted',reset_at:'2026-10-29T00:00:00Z'}},{type:'result',subtype:'success',is_error:true,result:'usage_limit_reached'}];
   const result=inspectNativeEvents('anthropic',events,{exitCode:1});
