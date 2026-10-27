@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "provider": "anthropic",
+  "findings": [
+    {
+      "toolId": "defending-code-harness",
+      "ruleId": "INPUT-VALIDATION",
+      "title": "Input validation may be incomplete",
+      "severity": "low",
+      "description": "A user-controlled value may reach a sensitive operation without validation.",
+      "location": { "path": "src/handlers/request.js", "line": 18 },
+      "verification": "candidate",
+      "evidence": { "summary": "Replace this example with reviewed harness evidence." }
+    }
+  ]
+}

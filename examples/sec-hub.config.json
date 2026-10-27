@@ -1,0 +1,24 @@
+{
+  "tools": {
+    "osv": {
+      "command": "osv-scanner",
+      "args": []
+    },
+    "skillspector": {
+      "command": "skillspector",
+      "args": []
+    },
+    "codex-security": {
+      "command": "cs",
+      "args": []
+    },
+    "open-code-review": {
+      "command": "ocr",
+      "args": []
+    },
+    "php2shell": {
+      "command": "node",
+      "args": ["/absolute/path/to/php2shell-checker/skills/phpcheck-url/scripts/phpcheck.js"]
+    }
+  }
+}

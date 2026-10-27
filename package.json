@@ -1,0 +1,11 @@
+{
+  "name": "sec-hub-local",
+  "version": "0.1.0",
+  "description": "Local security scanner orchestration with explicit coverage and provenance",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "bin": { "sec-hub": "bin/sec-hub.mjs" },
+  "scripts": { "test": "node --test test/*.test.mjs", "doctor": "node bin/sec-hub.mjs doctor" },
+  "license": "UNLICENSED"
+}

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "provider": "cloudflare",
+  "findings": [
+    {
+      "toolId": "cloudflare-audit",
+      "ruleId": "AUTHZ-MISSING-CHECK",
+      "title": "Authorization check may be missing",
+      "severity": "medium",
+      "description": "A request path may reach a sensitive operation without an authorization check.",
+      "location": { "path": "src/routes/account.js", "line": 42 },
+      "verification": "candidate",
+      "evidence": { "summary": "Add source-grounded trace and explain validation limits." }
+    }
+  ]
+}
