@@ -260,3 +260,32 @@ test('Codex wrapper forwards termination and does not export a failed scan', asy
   assert.match(result.output,/native-terminated/);
   await assert.rejects(readFile(join(artifactDir,'export.stdout.log')), { code: 'ENOENT' });
 });
+
+test('AI scan flags are appended after subcommands while probes retain only executable prefixes',async()=>{
+  const artifactDir=await mkdtemp(join(tmpdir(),'sec-ai-options-'));
+  const fake=join(artifactDir,'probe.mjs');
+  await writeFile(fake,`if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['--version']))process.exit(3);else console.log('fixture 1.0');`);
+  const scanOptions={provider:'chatgpt',model:'gpt-6.1-sol',maxTokensBudget:20000,concurrency:1,timeoutMinutes:3,noPlan:true,noDedup:false,noSummary:true};
+  const config={tools:{'open-code-review':{command:process.execPath,args:[fake],scanOptions}}};
+  const adapter=getAdapter('open-code-review');
+  assert.equal((await adapter.check({config})).available,true);
+  assert.deepEqual(adapter.build({target:'/repo',artifactDir,config}).args,[fake,'scan','--repo','/repo','--format','json','--output',join(artifactDir,'native.json'),'--provider','chatgpt','--model','gpt-6.1-sol','--max-tokens-budget','20000','--concurrency','1','--timeout','3','--no-plan','--no-summary']);
+  assert.throws(()=>adapter.build({target:'/repo',artifactDir,config:{tools:{'open-code-review':{command:'ocr',scanOptions:{patch:true}}}}}),/scanOptions/);
+});
+
+test('Codex wrapper applies scan options only to scan and keeps native result directory external',async()=>{
+  const artifactDir=await mkdtemp(join(tmpdir(),'sec-codex-options-')),fake=join(artifactDir,'fake-cs.mjs');
+  const native=await fixture('codex-positive');
+  await writeFile(fake,`import {writeFile,mkdir} from 'node:fs/promises';
+    const a=process.argv.slice(2);console.log(JSON.stringify(a));
+    if(a[0]==='scan')await mkdir(a[a.indexOf('--output-dir')+1],{recursive:true});
+    else if(a[0]==='export')await writeFile(a[a.indexOf('--output')+1],${JSON.stringify(JSON.stringify(native))});else process.exitCode=2;`);
+  const scanOptions={auth:'chatgpt',model:'gpt-6.1-sol',effort:'medium',maxCost:2,maxTimeMinutes:3};
+  const spec=getAdapter('codex-security').build({target:artifactDir,artifactDir,config:{tools:{'codex-security':{command:process.execPath,args:[fake],scanOptions}}}});
+  const result=await new Promise((resolve,reject)=>{const p=spawn(spec.command,spec.args,{shell:false});let stdout='';p.stdout.on('data',b=>stdout+=b);p.on('error',reject);p.on('close',code=>resolve({code,stdout}));});
+  assert.equal(result.code,0);
+  const [scan,exported]=result.stdout.trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(scan.slice(-10),['--auth','chatgpt','--model','gpt-6.1-sol','--effort','medium','--max-cost','2','--max-time','3']);
+  assert.equal(scan[scan.indexOf('--output-dir')+1].startsWith(artifactDir),false);
+  assert.deepEqual(exported.slice(2),['--export-format','json','--output',join(artifactDir,'findings.json')]);
+});

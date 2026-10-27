@@ -33,7 +33,7 @@ async function main() {
   const temporary = await mkdtemp(join(tmpdir(), 'sec-hub-codex-'));
   const results = join(temporary, 'results');
   try {
-    const scanCode = await native(options, 'scan', ['scan', options.target, '--output-dir', results, '--headless', '--json']);
+    const scanCode = await native(options, 'scan', ['scan', options.target, '--output-dir', results, '--headless', '--json', ...(options.scanArgs ?? [])]);
     if (interrupted) return interrupted;
     let code = scanCode;
     if ([0, 1].includes(scanCode)) {

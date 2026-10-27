@@ -129,3 +129,16 @@ test('imported SARIF does not claim a local scan and includes imported coverage 
     assert.match(html, /Imported results are external reports/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+test('aggregate reports identify both source runs and omit a single local scan invocation',async()=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'sec-hub-aggregate-report-'));
+  const data=run();
+  data.provenance={kind:'aggregate',sourceRuns:[{id:'initial-run',path:'/initial/run.json',link:'../initial/run.json',status:'partial'},{id:'retry-run',path:'/retry/run.json',link:'../retry/run.json',status:'completed'}],retry:{toolId:'open-code-review',previousStatus:'failed',reason:'budget dispatch guard'}};
+  data.tools[0].provenance={sourceRunId:'initial-run',sourceRunPath:'/initial/run.json'};
+  const output=await writeReports(data,directory),html=await readFile(output.html,'utf8'),sarif=JSON.parse(await readFile(output.sarif,'utf8'));
+  assert.match(html,/Aggregate verification/);assert.match(html,/same unchanged target/);assert.match(html,/initial-run/);assert.match(html,/retry-run/);assert.match(html,/href="\.\.\/initial\/run.json"/);assert.match(html,/budget dispatch guard/);
+  assert.equal(sarif.runs[0].invocations,undefined);
+  assert.equal(sarif.runs[0].properties.provenance.kind,'aggregate');
+  assert.deepEqual(sarif.runs[0].properties.provenance.sourceRuns.map(item=>item.id),['initial-run','retry-run']);
+  assert.equal(sarif.runs[0].properties.toolStates[0].provenance.sourceRunId,'initial-run');
+});

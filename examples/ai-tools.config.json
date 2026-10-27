@@ -1,0 +1,32 @@
+{
+  "tools": {
+    "osv": { "command": "osv-scanner", "args": [] },
+    "skillspector": { "command": "skillspector", "args": [] },
+    "codex-security": {
+      "command": "cs",
+      "args": [],
+      "scanOptions": {
+        "auth": "chatgpt",
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "maxCost": 2,
+        "maxTimeMinutes": 3
+      }
+    },
+    "open-code-review": {
+      "command": "ocr",
+      "args": [],
+      "scanOptions": {
+        "provider": "chatgpt",
+        "model": "gpt-6.1-sol",
+        "maxTokensBudget": 40000,
+        "concurrency": 1,
+        "timeoutMinutes": 3,
+        "noPlan": true,
+        "noDedup": true,
+        "noSummary": true
+      }
+    },
+    "php2shell": { "command": "node", "args": ["/absolute/path/to/php2shell-checker/skills/phpcheck-url/scripts/phpcheck.js"] }
+  }
+}

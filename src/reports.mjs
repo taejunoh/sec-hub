@@ -97,6 +97,15 @@ function validateRun(run) {
   if (!Array.isArray(run.tools) || !Array.isArray(run.findings)) throw new TypeError('run.tools and run.findings must be arrays');
 }
 
+function aggregateNotice(run) {
+  if (run.provenance?.kind !== 'aggregate') return '';
+  const sources = (run.provenance.sourceRuns ?? []).map(source => {
+    const link = typeof source.link === 'string' && /^\.{1,2}\//.test(source.link) && !/[\\\x00-\x1f]/.test(source.link) ? `<a href="${esc(source.link)}">${esc(source.id)}</a>` : esc(source.id);
+    return `<li>${link} · ${esc(source.status)}</li>`;
+  }).join('');
+  return `<section class="panel"><h2>Aggregate verification</h2><p>Results from the initial run plus an OCR retry on the same unchanged target. Source runs retain their original execution states and native artifacts.</p><ul>${sources}</ul><p>Original OCR status: ${esc(run.provenance.retry?.previousStatus)} · retry reason: ${esc(run.provenance.retry?.reason)}.</p></section>`;
+}
+
 function renderHtml(run, findings) {
   const tools = run.tools;
   const selected = tools.filter((tool) => tool.selected ?? tool.status !== 'skipped');
@@ -109,14 +118,14 @@ function renderHtml(run, findings) {
     const refs = finding.references.map((reference) => { const href = safeLink(reference); return href ? `<a rel="noreferrer" href="${esc(href)}">${esc(reference)}</a>` : `<span>${esc(reference)}</span>`; }).join(' · ');
     return `<article class="finding"><div class="finding-head"><span class="badge ${esc(finding.severity)}">${esc(finding.severity)}</span><h3>${esc(finding.title)}</h3></div><p class="muted">${esc(locationLabel(finding.location))}</p><p>${esc(finding.description ?? 'No description supplied.')}</p><p class="meta">Provenance: ${esc(finding.verification ?? 'reported')} · Sources: ${esc(finding.sources.join(', '))}</p>${finding.aliases.length ? `<p class="meta">Advisories: ${esc(finding.aliases.join(', '))}</p>` : ''}${refs ? `<p class="meta">References: ${refs}</p>` : ''}${finding.sourceRecords.map((record) => record.evidence === undefined ? '' : `<details><summary>Evidence from ${esc(record.toolId)}</summary><pre>${esc(stringify(record.evidence))}</pre></details>`).join('')}</article>`;
   }).join('') : '<p class="empty">0 findings. This means these completed checks reported no findings; it does not prove the target is free of vulnerabilities.</p>';
-  const toolRows = tools.map((tool) => `<tr><td>${esc(tool.name ?? tool.id)}</td><td>${esc(tool.status)}</td><td>${esc(tool.source ?? '')}</td><td>${esc(Array.isArray(tool.findings) ? tool.findings.length : tool.findings ?? 0)}</td><td>${esc(tool.reason ?? '')}</td></tr>`).join('');
+  const toolRows = tools.map((tool) => `<tr><td>${esc(tool.name ?? tool.id)}</td><td>${esc(tool.status)}</td><td>${esc(tool.source ?? '')}</td><td>${esc(Array.isArray(tool.findings) ? tool.findings.length : tool.findings ?? 0)}</td><td>${esc([tool.reason, tool.provenance?.sourceRunId && `Source run: ${tool.provenance.sourceRunId}`].filter(Boolean).join(' · '))}</td></tr>`).join('');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sec Hub report · ${esc(run.id)}</title>
 <style>
 :root{color-scheme:light dark;--bg:#f5f7fa;--panel:#fff;--text:#182230;--muted:#596579;--line:#d9e0e8;--accent:#265d97;--red:#a32222;--orange:#8b4a00} @media(prefers-color-scheme:dark){:root{--bg:#111820;--panel:#1b2631;--text:#e8edf3;--muted:#b1becc;--line:#394958;--accent:#83baff;--red:#ff8a8a;--orange:#ffc16b}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:1050px;margin:0 auto;padding:32px 20px 64px}h1{font-size:2rem;margin:0 0 5px}h2{font-size:1.3rem;margin:30px 0 12px}.muted,.meta{color:var(--muted);font-size:.92rem}.panel,.finding{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin:12px 0}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:22px 0}.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}.stat b{display:block;font-size:1.55rem}.finding-head{display:flex;align-items:center;gap:10px}.finding h3{margin:0;font-size:1.08rem}.badge{border-radius:999px;padding:3px 9px;background:#e9edf2;color:#263648;font-size:.82rem;font-weight:700;text-transform:uppercase}.badge.critical,.badge.high{background:#fce3e3;color:var(--red)}.badge.medium{background:#fff0d8;color:var(--orange)}a{color:var(--accent);overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);padding:12px;border-radius:8px}table{width:100%;border-collapse:collapse;background:var(--panel);font-size:.92rem}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted)}.empty{padding:16px;border-left:4px solid var(--accent);background:var(--panel)}
 </style></head><body><main><h1>Security scan report</h1><p class="muted">Run ${esc(run.id)} · target ${esc(run.target.path)} · ${esc(run.status)}</p><p class="muted">Started ${esc(run.startedAt)} · ended ${esc(run.endedAt)}${run.target.revision ? ` · revision ${esc(run.target.revision)}` : ''}${run.target.dirty === true ? ' · working tree dirty' : ''}</p>
-<div class="stats"><div class="stat"><b>${findings.length}</b>findings</div><div class="stat"><b>${selected.length}</b>selected</div><div class="stat"><b>${completed.length}</b>completed</div><div class="stat"><b>${skipped.length}</b>skipped</div><div class="stat"><b>${failed.length}</b>failed</div><div class="stat"><b>${imported.length}</b>imported</div><div class="stat"><b>${findings.filter((f) => f.verification === 'candidate').length}</b>candidates</div><div class="stat"><b>${findings.filter((f) => f.verification === 'confirmed').length}</b>confirmed</div></div>
+${aggregateNotice(run)}<div class="stats"><div class="stat"><b>${findings.length}</b>findings</div><div class="stat"><b>${selected.length}</b>selected</div><div class="stat"><b>${completed.length}</b>completed</div><div class="stat"><b>${skipped.length}</b>skipped</div><div class="stat"><b>${failed.length}</b>failed</div><div class="stat"><b>${imported.length}</b>imported</div><div class="stat"><b>${findings.filter((f) => f.verification === 'candidate').length}</b>candidates</div><div class="stat"><b>${findings.filter((f) => f.verification === 'confirmed').length}</b>confirmed</div></div>
 <h2>Coverage</h2><div class="panel"><table><thead><tr><th>Integration</th><th>Status</th><th>Source</th><th>Findings</th><th>Details</th></tr></thead><tbody>${toolRows}</tbody></table>${limitations.length ? `<p class="meta">Coverage limitations: ${limitations.map((tool) => `${esc(tool.name ?? tool.id)} (${esc(tool.status)}${tool.reason ? `: ${esc(tool.reason)}` : ''})`).join('; ')}.</p>` : '<p class="meta">Coverage limitations: this report covers only the checks and scan modes listed above. A clean result does not establish absence of vulnerabilities.</p>'}<p class="meta">Imported results are external reports and were not executed locally by Sec Hub. Candidate, reported, and confirmed provenance reflects each source record.</p></div>
 <h2>Findings</h2>${findingRows}<footer class="muted">Generated by Sec Hub. A clean report does not establish absence of vulnerabilities.</footer></main></body></html>`;
 }
@@ -132,11 +141,12 @@ function toSarif(run, findings) {
   }
   const ruleList = [...rules.values()];
   const ruleIndex = new Map(ruleList.map((rule, index) => [rule.id, index]));
+  const aggregate = run.provenance?.kind === 'aggregate';
   const importedOnly = run.tools.length > 0 && run.tools.every((tool) => tool.status === 'imported');
-  const toolStates = run.tools.map(({ id, status, source, selected, reason }) => ({ id, status, ...(source ? { source } : {}), ...(selected !== undefined ? { selected } : {}), ...(reason ? { reason } : {}) }));
+  const toolStates = run.tools.map(({ id, status, source, selected, reason, provenance }) => ({ id, status, ...(source ? { source } : {}), ...(selected !== undefined ? { selected } : {}), ...(reason ? { reason } : {}), ...(provenance ? { provenance } : {}) }));
   const sarifRun = {
     tool: { driver: { name: 'Sec Hub', informationUri: 'https://github.com/openai/sec-hub', rules: ruleList } },
-    properties: { runId: run.id, target: run.target.path, status: run.status, provenance: importedOnly ? 'imported' : 'local', toolStates },
+    properties: { runId: run.id, target: run.target.path, status: run.status, provenance: aggregate ? clone(run.provenance) : importedOnly ? 'imported' : 'local', toolStates },
     results: findings.map((finding) => {
       const result = { ruleId: `${finding.toolId}:${finding.ruleId}`, ruleIndex: ruleIndex.get(`${finding.toolId}:${finding.ruleId}`), level: ({ critical: 'error', high: 'error', medium: 'warning', low: 'note', info: 'note', unknown: 'none' })[finding.severity], message: { text: finding.description ?? finding.title }, properties: { severity: finding.severity, verification: finding.verification ?? 'reported', sources: finding.sources, aliases: finding.aliases } };
       if (finding.location.path || safeLink(finding.location.url ?? '')) result.locations = [{ physicalLocation: { artifactLocation: { uri: sarifUri(finding.location.path ?? safeLink(finding.location.url)), ...(safeLink(finding.location.url ?? '') ? { properties: { url: safeLink(finding.location.url) } } : {}) }, ...(finding.location.line ? { region: { startLine: finding.location.line } } : {}) } }];
@@ -145,7 +155,7 @@ function toSarif(run, findings) {
       return result;
     }),
   };
-  if (!importedOnly) sarifRun.invocations = [{ executionSuccessful: run.status === 'completed', commandLine: 'sec-hub scan', startTimeUtc: run.startedAt, endTimeUtc: run.endedAt }];
+  if (!importedOnly && !aggregate) sarifRun.invocations = [{ executionSuccessful: run.status === 'completed', commandLine: 'sec-hub scan', startTimeUtc: run.startedAt, endTimeUtc: run.endedAt }];
   return {
     version: '2.1.0', $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
     runs: [sarifRun],

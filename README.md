@@ -75,6 +75,22 @@ node bin/sec-hub.mjs import anthropic ./anthropic-handoff/findings.json --target
 
 PHP 검사기는 Node 실행 파일 뒤에 스크립트 경로를 설정합니다. AI 도구는 동일하게 실행 파일과 인자를 설정하고 `--ai`를 함께 전달합니다. 자격 증명은 도구가 요구하는 환경에서 직접 제공합니다. 설정 파일과 상속된 환경 변수는 보고서에 기록되지 않습니다.
 
+AI 검사에만 적용할 인증 방식·모델·실행 예산은 선택적인 `scanOptions`로 지정할 수 있습니다. [예산을 제한한 다섯 도구 설정 예시](examples/ai-tools.config.json)는 upstream 로그인 저장소를 사용하는 예시이며 자격 증명을 포함하지 않습니다. `args`는 계속 실행 파일 접두사이며, `scanOptions`는 `scan` 뒤에만 추가됩니다. 버전 확인과 Codex `export`에는 전달하지 않습니다. `--ai`는 여전히 필수입니다.
+
+Codex 옵션은 `auth` (`chatgpt`, `api-key`, `auto`), `model` (비어 있지 않은 문자열), `effort` (`low`, `medium`, `high`, `xhigh`), `maxCost`와 `maxTimeMinutes` (양수)입니다. OCR 옵션은 `provider`, `model` (비어 있지 않은 문자열), `maxTokensBudget`, `concurrency`, `timeoutMinutes` (양의 정수), `noPlan`, `noDedup`, `noSummary` (boolean)입니다. 알 수 없는 옵션과 패치·출력 경로 덮어쓰기는 거부합니다. 네이티브 예산은 upstream 정책에 따른 제한이며, Sec Hub의 `--timeout`도 별도로 적용됩니다.
+
+OCR은 다음 파일의 예상 토큰을 예산에 미리 예약하므로 실제 사용량이 한도보다 낮아도 파일 검토를 건너뛸 수 있습니다. 이 합성 fixture에서는 20,000 토큰 예산이 `server.mjs` 배치를 막았으므로 예시는 40,000을 사용합니다. `budget_exceeded`나 검토 제한 경고가 있으면 finding이 0건이어도 완료로 처리하지 않습니다.
+
+인증된 다섯 CLI를 재검증하려면 upstream의 공식 로그인 명령으로 먼저 로그인하고, 설치 경로를 바꾼 명시적 설정과 새 절대 출력 경로를 전달합니다. 이 명령은 AI 서비스를 실제 호출합니다.
+
+```sh
+node scripts/live-verify-five.mjs --config /absolute/ai-tools.config.json --out /absolute/new-verification-run
+```
+
+필요하면 `--runtime /absolute/node`로 Node 22 이상 실행 파일을 지정할 수 있습니다. helper는 `work/live-five-target-*`에 안전한 합성 소스와 오래된 의존성 메타데이터를 복사하고, localhost PHP 응답 헤더를 검사하며, 대상 소스를 설치하거나 실행하지 않습니다. 다섯 도구를 명시적으로 선택하고 각 도구에 600초 제한을 적용합니다. 완료 상태·네이티브 출력·보고서 재생성·SARIF·파일 SHA-256을 기록합니다. 실패와 부분 결과도 보존하며, 다섯 도구 모두 완료해야 helper가 성공합니다. OCR의 새 세션 메타데이터는 추가 파일로 기록하고, 기존 소스가 수정되면 검증 실패로 처리합니다. Git 내부 메타데이터는 해시 대상에서 제외합니다. 테스트에서 사용하는 controlled CLI는 실제 인증 호출의 증거가 아닙니다.
+
+검증 과정에서 OCR만 재시도한 두 실행을 합칠 때는 `scripts/combine-verified-runs.mjs --original /absolute/initial-run --retry /absolute/ocr-retry --out /absolute/new-combined-run`을 사용할 수 있습니다. 이 helper는 같은 경로·revision과 원래 대상의 실행 전·후·현재 SHA-256, 보존된 네이티브 결과 및 원본 아티팩트 해시를 확인합니다. 초기 실행의 네 도구 완료와 OCR 실패, OCR만 선택한 성공 재시도가 필요합니다. 합친 보고서는 `aggregate` 출처와 두 실행 ID, 원래 실패 이력을 명시하며 두 실행을 한 번의 검사로 표시하지 않습니다. 원래 실행 폴더는 수정하지 않습니다.
+
 ## 결과 해석
 
 HTML 보고서는 각 도구의 selected/completed/skipped/failed/imported 상태, 실행 범위, 실패 사유, 미실행으로 인한 범위 제한을 함께 표시합니다. finding의 `candidate`, `reported`, `confirmed` 출처 상태를 구분합니다. 모든 검사가 완료되어 finding이 0건이어도 취약점이 없다는 증명은 아닙니다. SARIF에서 `unknown` 심각도는 `level: none`과 `properties.severity: unknown`으로 유지됩니다.
@@ -98,4 +114,4 @@ node --test
 
 ## 이번 빌드의 검증 결과
 
-자동 테스트 58개를 통과했고, 실제 OSV·정적 SkillSpector·PHP 검사기로 통제된 데이터에서 총 10건을 수집했습니다. [실제 HTML 보고서](verification/final-scan/report.html), [검증 기록](verification/VALIDATION.md), [보안 재검토 기록](verification/REVIEW.md)을 확인할 수 있습니다. Codex Security/Open Code Review의 인증된 모델 호출과 Cloudflare/Anthropic의 실제 에이전트 감사는 실행하지 않았습니다. 이 환경에서 준비한 세 도구의 경로는 `verification/tools.config.json`에 있으며, 다른 기기에서는 경로를 바꿔야 합니다.
+0.1.1은 자동 테스트 68개를 통과했고, Codex Security와 Open Code Review의 ChatGPT 인증을 포함한 실제 5개 CLI 검사에서 검증용 코드의 결과 13건을 수집했습니다. [통합 HTML 보고서](verification/authenticated-five-combined/report.html)와 [인증·실행 검증 기록](verification/AUTHENTICATED-VALIDATION.md)을 확인할 수 있습니다. 최초 실행과 OCR 예산 조정 재실행의 출처를 보존했으며, 동일 코드의 해시와 원본 결과를 검증해 결합했습니다. 다섯 도구의 실행 경로와 모델·제한 설정은 `verification/authenticated-tools.config.json`에 있습니다. 인증 정보는 패키지에 포함하지 않으며, 다른 기기에서는 도구 설치·로그인과 경로 변경이 필요합니다. Cloudflare/Anthropic은 계속 실행 안내와 결과 가져오기를 제공합니다.

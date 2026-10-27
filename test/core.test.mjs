@@ -184,3 +184,71 @@ test('doctor CLI cancellation cleans up its version probe before returning',{ski
     assert.throws(()=>process.kill(probePid,0),/ESRCH/);
   }finally{child.kill('SIGKILL');if(probePid)try{process.kill(probePid,'SIGKILL');}catch{}}
 });
+
+test('AI scan options accept bounded typed values and preserve executable prefixes',async()=>{
+  const directory=await temp(),file=join(directory,'config.json');
+  const tools={
+    'codex-security':{command:'cs',args:['prefix'],scanOptions:{auth:'chatgpt',model:'gpt-6.1-sol',effort:'medium',maxCost:2,maxTimeMinutes:3}},
+    'open-code-review':{command:'ocr',scanOptions:{provider:'chatgpt',model:'gpt-6.1-sol',maxTokensBudget:20000,concurrency:1,timeoutMinutes:3,noPlan:true,noDedup:false,noSummary:true}}
+  };
+  await writeFile(file,JSON.stringify({tools}));
+  const loaded=await configuration.loadConfig(file);
+  assert.deepEqual(loaded.tools['codex-security'],tools['codex-security']);
+  assert.deepEqual(loaded.tools['open-code-review'].scanOptions,tools['open-code-review'].scanOptions);
+});
+
+test('AI scan options reject unknown unsafe and invalid fields before invocation',async()=>{
+  const directory=await temp(),file=join(directory,'config.json');
+  for(const [id,scanOptions] of [
+    ['codex-security',{patch:true}],['codex-security',{outputDir:'/elsewhere'}],['codex-security',{auth:'other'}],
+    ['codex-security',{model:''}],['codex-security',{effort:'max'}],['codex-security',{maxCost:0}],['codex-security',{maxTimeMinutes:-1}],
+    ['open-code-review',{provider:''}],['open-code-review',{maxTokensBudget:2.5}],['open-code-review',{concurrency:0}],
+    ['open-code-review',{timeoutMinutes:'3'}],['open-code-review',{noPlan:'true'}],['osv',{model:'anything'}]
+  ]){
+    await writeFile(file,JSON.stringify({tools:{[id]:{command:'must-not-run',scanOptions}}}));
+    await assert.rejects(configuration.loadConfig(file),/scanOptions/);
+  }
+});
+
+async function fiveToolConfig(directory,{failOCR=false}={}) {
+  const fake=join(directory,'fake-native.mjs'),file=join(directory,'five.config.json');
+  const payloads={};
+  for(const [id,name] of [['osv','osv-positive'],['skillspector','skillspector-positive'],['codex-security','codex-positive'],['open-code-review','ocr-positive']])payloads[id]=JSON.parse(await readFile(new URL(`./fixtures/adapters/${name}.json`,import.meta.url),'utf8'));
+  await writeFile(fake,`import {mkdir,writeFile} from 'node:fs/promises';
+    const [id,...a]=process.argv.slice(2),data=${JSON.stringify(payloads)};
+    if(a[0]==='--version'){console.log('controlled-fixture 1.0');process.exit(0);}
+    if(id==='open-code-review'&&${JSON.stringify(failOCR)}){console.error('controlled native failure');process.exit(9);}
+    if(id==='codex-security'&&a[0]==='scan'){await mkdir(a[a.indexOf('--output-dir')+1],{recursive:true});process.exit(0);}
+    if(id==='php2shell'){console.log(JSON.stringify({patch_status:'potentially_vulnerable',php_version:'8.1.2',reason:'Controlled fixture',exit_code:1}));process.exit(1);}
+    const flag=id==='osv'?'--output-file':'--output';
+    await writeFile(a[a.indexOf(flag)+1],JSON.stringify(data[id]));`);
+  const tools=Object.fromEntries(['osv','skillspector','codex-security','open-code-review','php2shell'].map(id=>[id,{command:process.execPath,args:[fake,id]}]));
+  tools['codex-security'].scanOptions={auth:'chatgpt',model:'gpt-6.1-sol',effort:'medium',maxCost:2,maxTimeMinutes:3};
+  tools['open-code-review'].scanOptions={provider:'chatgpt',model:'gpt-6.1-sol',maxTokensBudget:20000,concurrency:1,timeoutMinutes:3,noPlan:true,noDedup:true,noSummary:true};
+  await writeFile(file,JSON.stringify({tools}));return file;
+}
+
+test('five-tool verification helper executes adapters and records reports hashes and coverage using controlled CLIs',async()=>{
+  const directory=await temp(),config=await fiveToolConfig(directory),out=join(directory,'run');
+  const result=await runner.runProcess({command:process.execPath,args:[new URL('../scripts/live-verify-five.mjs',import.meta.url).pathname,'--config',config,'--out',out],successCodes:[0]},{timeoutMs:15000});
+  assert.equal(result.status,'completed',result.stderr);
+  const evidence=JSON.parse(await readFile(join(out,'verification-commands.json'),'utf8'));
+  assert.equal(evidence.verificationPassed,true);
+  assert.equal(evidence.tools.length,5);
+  assert.ok(evidence.tools.every(tool=>tool.status==='completed'));
+  assert.equal(evidence.targetChanges.changed.length,0);
+  assert.ok(evidence.targetHashes.before['server.mjs']);
+  assert.ok(evidence.artifactHashes['results.sarif']);
+  assert.equal(JSON.parse(await readFile(join(out,'results.sarif'),'utf8')).version,'2.1.0');
+});
+
+test('five-tool verification helper retains failed coverage and evidence instead of claiming success',async()=>{
+  const directory=await temp(),config=await fiveToolConfig(directory,{failOCR:true}),out=join(directory,'run');
+  const result=await runner.runProcess({command:process.execPath,args:[new URL('../scripts/live-verify-five.mjs',import.meta.url).pathname,'--config',config,'--out',out],successCodes:[0]},{timeoutMs:15000});
+  assert.equal(result.exitCode,2);
+  const evidence=JSON.parse(await readFile(join(out,'verification-commands.json'),'utf8'));
+  assert.equal(evidence.verificationPassed,false);
+  assert.equal(evidence.tools.find(tool=>tool.id==='open-code-review').status,'failed');
+  const saved=JSON.parse(await readFile(join(out,'run.json'),'utf8'));
+  assert.equal(saved.status,'partial');assert.ok(saved.findings.length>0);
+});

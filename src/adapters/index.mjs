@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runProcess } from '../processes.mjs';
+import { validateScanOptions } from '../config.mjs';
 
 const MAX_NATIVE_BYTES = 20 * 1024 * 1024;
 const wrapper = fileURLToPath(new URL('./codex-wrapper.mjs', import.meta.url));
@@ -36,6 +37,13 @@ function executable(ctx, id, command) {
   const override = ctx.config?.tools?.[id];
   if (override !== undefined && (!object(override) || !string(override.command) || (override.args !== undefined && (!Array.isArray(override.args) || override.args.some(x => typeof x !== 'string'))))) invalid(id, 'invalid executable configuration');
   return { command: override?.command ?? command, args: override?.args ?? [] };
+}
+function scanArgs(ctx, id) {
+  const options = validateScanOptions(id, ctx.config?.tools?.[id]?.scanOptions);
+  const flags = id === 'codex-security'
+    ? { auth: '--auth', model: '--model', effort: '--effort', maxCost: '--max-cost', maxTimeMinutes: '--max-time' }
+    : { provider: '--provider', model: '--model', maxTokensBudget: '--max-tokens-budget', concurrency: '--concurrency', timeoutMinutes: '--timeout', noPlan: '--no-plan', noDedup: '--no-dedup', noSummary: '--no-summary' };
+  return Object.entries(flags).flatMap(([key, flag]) => options[key] === undefined || options[key] === false ? [] : options[key] === true ? [flag] : [flag, String(options[key])]);
 }
 function command(ctx, id, defaultCommand, args, findingCodes = []) {
   const configured = executable(ctx, id, defaultCommand);
@@ -171,8 +179,8 @@ async function parsePHP(ctx) {
 export const adapters = [
   { id: 'osv', name: 'Google OSV Scanner', kind: 'cli', source: sources.osv, requiresAI: false, network: 'OSV vulnerability database and package metadata services', install: 'go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0', check: ctx => probe(ctx, 'osv', 'osv-scanner'), build: ctx => command(ctx, 'osv', 'osv-scanner', ['scan', 'source', '-r', '--no-resolve', '--no-call-analysis=go', '--no-call-analysis=rust', '--format', 'json', '--output-file', join(ctx.artifactDir, 'native.json'), ctx.target], [1]), parse: parseOSV },
   { id: 'skillspector', name: 'NVIDIA SkillSpector (static)', kind: 'cli', source: sources.skillspector, requiresAI: false, network: 'Static mode; advisory enrichment may access external vulnerability services', install: 'uv tool install git+https://github.com/NVIDIA/skillspector.git@a5425e594d59a14c3d3eaa39e26847613ba08696', check: ctx => probe(ctx, 'skillspector', 'skillspector'), build: ctx => command(ctx, 'skillspector', 'skillspector', ['scan', ctx.target, '--no-llm', '--format', 'json', '--output', join(ctx.artifactDir, 'native.json')], [1]), parse: parseSkillspector },
-  { id: 'codex-security', name: 'OpenAI Codex Security', kind: 'cli', source: sources['codex-security'], requiresAI: true, network: 'Code and context may be uploaded to the configured model provider', install: 'npm install -g @openai/codex-security@0.7.0', check: ctx => probe(ctx, 'codex-security', 'cs'), build: ctx => ({ command: process.execPath, args: [wrapper, JSON.stringify({ ...executable(ctx, 'codex-security', 'cs'), target: ctx.target, artifactDir: ctx.artifactDir })], successCodes: [0], findingCodes: [1] }), parse: parseCodex },
-  { id: 'open-code-review', name: 'Alibaba Open Code Review', kind: 'cli', source: sources['open-code-review'], requiresAI: true, network: 'Code and context may be uploaded to the configured model provider; native OCR may write session metadata', install: 'npm install -g @alibaba-group/open-code-review@1.13.3', check: ctx => probe(ctx, 'open-code-review', 'ocr'), build: ctx => command(ctx, 'open-code-review', 'ocr', ['scan', '--repo', ctx.target, '--format', 'json', '--output', join(ctx.artifactDir, 'native.json')]), parse: parseOCR },
+  { id: 'codex-security', name: 'OpenAI Codex Security', kind: 'cli', source: sources['codex-security'], requiresAI: true, network: 'Code and context may be uploaded to the configured model provider', install: 'npm install -g @openai/codex-security@0.7.0', check: ctx => probe(ctx, 'codex-security', 'cs'), build: ctx => ({ command: process.execPath, args: [wrapper, JSON.stringify({ ...executable(ctx, 'codex-security', 'cs'), target: ctx.target, artifactDir: ctx.artifactDir, scanArgs: scanArgs(ctx, 'codex-security') })], successCodes: [0], findingCodes: [1] }), parse: parseCodex },
+  { id: 'open-code-review', name: 'Alibaba Open Code Review', kind: 'cli', source: sources['open-code-review'], requiresAI: true, network: 'Code and context may be uploaded to the configured model provider; native OCR may write session metadata', install: 'npm install -g @alibaba-group/open-code-review@1.13.3', check: ctx => probe(ctx, 'open-code-review', 'ocr'), build: ctx => command(ctx, 'open-code-review', 'ocr', ['scan', '--repo', ctx.target, '--format', 'json', '--output', join(ctx.artifactDir, 'native.json'), ...scanArgs(ctx, 'open-code-review')]), parse: parseOCR },
   { id: 'php2shell', name: 'OpenAI PHP2Shell Checker (header heuristic)', kind: 'cli', source: sources.php2shell, requiresAI: false, network: 'HEAD, with GET fallback on 405/501, to the explicitly provided URL only; no redirects followed', install: 'git clone https://github.com/openai/php2shell-checker.git; configure command node and args [absolute path to phpcheck.js]', check: ctx => probe(ctx, 'php2shell', 'phpcheck.js'), build: ctx => command(ctx, 'php2shell', 'phpcheck.js', [ctx.url, '--json'], [1, 3]), parse: parsePHP },
 ];
 export function getAdapter(id) { return adapters.find(adapter => adapter.id === id); }

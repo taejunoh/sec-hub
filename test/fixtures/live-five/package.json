@@ -1,0 +1,7 @@
+{
+  "name": "sec-hub-intentionally-vulnerable-test-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TEST ONLY: old dependency metadata for real scanner verification; never install or deploy",
+  "dependencies": { "lodash": "4.17.20" }
+}
