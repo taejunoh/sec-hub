@@ -47,7 +47,7 @@ function guideFor(bridge) {
     `Convert with care: preserve source evidence in \`evidence\`, include advisory identifiers in \`vulnerabilityId\` or \`aliases\`, and keep reported and confirmed states faithful to the source. Unknown input shapes and empty reports are rejected.\n\n` +
     (bridge.id === 'cloudflare'
       ? `## Cloudflare native reports\n\nSec Hub also accepts the official \`skills/security-audit/report-schema.json\` native format: a non-empty top-level array with supported \`confirmed\`, \`needs_validation\`, or \`rejected\` records. Confirmed issues import as confirmed, needs-validation issues as candidates, and rejected records are retained in the imported tool's rejected count but excluded from vulnerability findings. Fields are validated before conversion.\n\n`
-      : `## Upstream status\n\nThe Anthropic repository describes itself as not maintained and its license metadata is \`NOASSERTION\`. Sec Hub does not bundle its implementation. Its upstream native output shape is not claimed as a supported import format; convert reviewed results to the explicit Sec Hub contract above.\n\n`) +
+      : `## Upstream status\n\nThe Anthropic repository describes itself as not maintained. Its pinned revision d3bea6b5793b5f3d59a75ebe69a58efa88383145 includes an Apache-2.0 LICENSE. Sec Hub does not bundle its implementation. Its upstream native output shape is not claimed as a supported import format; convert reviewed results to the explicit Sec Hub contract above.\n\n`) +
     `## Import command\n\n\`node bin/sec-hub.mjs import ${bridge.id} findings.json --target /absolute/repository/path --out ./sec-hub-import\`\n`;
 }
 

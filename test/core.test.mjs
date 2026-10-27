@@ -252,3 +252,52 @@ test('five-tool verification helper retains failed coverage and evidence instead
   const saved=JSON.parse(await readFile(join(out,'run.json'),'utf8'));
   assert.equal(saved.status,'partial');assert.ok(saved.findings.length>0);
 });
+
+
+test('native agent options enforce allowlisted types and retain executable prefix',async()=>{
+  const directory=await temp(),file=join(directory,'config.json');
+  const agentOptions={skillRoot:'/official/skill',revision:'c1c8a8c1471069fb0e188eeaff69b8e8db6564a8',workRoot:'/private/work',model:'gpt-6.1-sol',profile:'quick',maxAgents:10,effort:'medium'};
+  await writeFile(file,JSON.stringify({tools:{cloudflare:{command:'codex',args:['prefix'],agentOptions}}}));
+  const loaded=await configuration.loadConfig(file);assert.deepEqual(loaded.tools.cloudflare.agentOptions,agentOptions);assert.deepEqual(loaded.tools.cloudflare.args,['prefix']);
+  assert.deepEqual(configuration.validateAgentOptions('anthropic',{mode:'vuln-scan',single:true,noScore:true,maxTurns:30,maxBudgetUsd:3}),{mode:'vuln-scan',single:true,noScore:true,maxTurns:30,maxBudgetUsd:3});
+  for(const [id,value] of [['cloudflare',{skillRoot:'relative'}],['cloudflare',{revision:'main'}],['cloudflare',{maxAgents:6}],['cloudflare',{maxAgents:7.1}],['cloudflare',{profile:'full'}],['cloudflare',{effort:'max'}],['cloudflare',{model:'--prompt=unsafe'}],['cloudflare',{apiKey:'secret'}],['cloudflare',{prompt:'custom'}],['cloudflare',{patch:true}],['anthropic',{single:false}],['anthropic',{noScore:false}],['anthropic',{maxTurns:0}],['anthropic',{maxBudgetUsd:Infinity}],['anthropic',{mode:'patch'}],['osv',{}]]) assert.throws(()=>configuration.validateAgentOptions(id,value),/agentOptions/);
+});
+test('AI defaults retain five-tool selection and native execution needs explicit config',async()=>{
+  const directory=await temp();let nativeChecked=false;
+  const adapters=['osv','skillspector','codex-security','open-code-review','php2shell'].map(id=>fakeAdapter(id));
+  adapters.push(fakeAdapter('cloudflare',{kind:'agent',requiresAI:true,check:async()=>{nativeChecked=true;return{available:true};}}));
+  const defaults=await runner.runScan({target:directory,out:join(directory,'defaults'),ai:true,url:'http://127.0.0.1',adapters});
+  assert.equal(defaults.tools.find(t=>t.id==='cloudflare').selected,false);assert.equal(nativeChecked,false);
+  const explicit=await runner.runScan({target:directory,out:join(await temp(),'explicit'),ai:true,tools:['cloudflare'],adapters});
+  assert.equal(explicit.status,'failed');assert.equal(nativeChecked,false);assert.match(explicit.tools.find(t=>t.id==='cloudflare').reason,/configuration/);
+});
+test('execution metadata is validated after native files have been redacted',async()=>{
+  const directory=await temp(),key='SEC_HUB_METADATA_API_KEY';process.env[key]='metadata-secret-test';
+  try{
+    const adapter=fakeAdapter('native',{build:ctx=>node('require("fs").writeFileSync(process.argv[1],process.env.SEC_HUB_METADATA_API_KEY);console.log("[]")',join(ctx.artifactDir,'native.txt')),executionMetadata:async ctx=>{assert.equal(await readFile(join(ctx.artifactDir,'native.txt'),'utf8'),'[REDACTED]');assert.equal(ctx.exitCode,0);return{executionMode:'static-source',limitations:['No dynamic verification'],dynamicVerification:'not_performed'};}});
+    const run=await runner.runScan({target:directory,out:join(directory,'run'),tools:['native'],adapters:[adapter]});assert.equal(run.status,'completed');assert.equal(run.tools[0].execution.executionMode,'static-source');
+    const failed=await runner.runScan({target:directory,out:join(directory,'failed'),tools:['native'],adapters:[{...adapter,executionMetadata:async()=>{throw new Error('missing native completion evidence');}}]});assert.equal(failed.status,'failed');
+  }finally{delete process.env[key];}
+});
+test('doctor exposes seven unique integrations with manual imports as capabilities',async()=>{
+  const directory=await temp(),data=await runner.doctor({target:directory});
+  assert.equal(data.tools.length,7);assert.equal(new Set(data.tools.map(t=>t.id)).size,7);
+  for(const id of ['cloudflare','anthropic']){const tool=data.tools.find(t=>t.id===id);assert.equal(tool.kind,'agent');assert.equal(tool.manualImport,true);assert.equal(tool.available,false);}
+});
+
+
+test('native output and workRoot preflight rejects target mutations before any mkdir',async()=>{
+  const directory=await temp(),target=join(directory,'target');await mkdir(target);await writeFile(join(target,'source.mjs'),'export const safe=true;\n');
+  const native=fakeAdapter('cloudflare',{kind:'agent',requiresAI:true});
+  const snapshot=async()=>({entries:await (await import('node:fs/promises')).readdir(target),source:await readFile(join(target,'source.mjs'),'utf8')});
+  const before=await snapshot();
+  for(const [out,workRoot] of [[join(target,'new-output'),join(directory,'work')],[join(directory,'outside-output'),join(target,'new-work')],[join(directory,'nested-output'),join(directory,'nested-output','raw','work')]]){
+    await assert.rejects(runner.runScan({target,out,ai:true,tools:['cloudflare'],config:{tools:{cloudflare:{command:'unused',agentOptions:{workRoot}}}},adapters:[native]}),/outside|overlap|target|stage/i);
+    assert.deepEqual(await snapshot(),before);await assert.rejects(lstat(out),/ENOENT/);
+  }
+  const alias=join(directory,'target-alias');await symlink(target,alias,'dir');
+  await assert.rejects(runner.runScan({target,out:join(alias,'new-output'),ai:true,tools:['cloudflare'],config:{tools:{cloudflare:{command:'unused',agentOptions:{workRoot:join(directory,'work')}}}},adapters:[native]}),/symbolic link|outside|target/i);
+  const out=join(directory,'safe-output');
+  await assert.rejects(runner.runScan({target,out,ai:true,tools:['cloudflare'],config:{tools:{cloudflare:{command:'unused',agentOptions:{workRoot:join(alias,'new-work')}}}},adapters:[native]}),/symbolic link|outside|target/i);
+  await assert.rejects(lstat(out),/ENOENT/);assert.deepEqual(await snapshot(),before);
+});

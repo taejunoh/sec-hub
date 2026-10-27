@@ -3,7 +3,7 @@ import { resolve, join, dirname } from 'node:path';
 import { loadConfig } from './config.mjs';
 import { runScan, doctor, exitCodeForRun, prepareRunDirectory, createRedactor } from './runner.mjs';
 
-const HELP=`Sec Hub 0.1.1 — local security scanner orchestration
+const HELP=`Sec Hub 0.2.0 — local security scanner orchestration
 
 Usage:
   sec-hub doctor [target] [--json] [--config file] [--ai]
@@ -15,7 +15,8 @@ Usage:
   sec-hub --help | --version
 
 Basic scan selects osv and skillspector. AI scanners require --ai and
-explicit executable configuration. PHP checks require an explicit HTTP(S) URL.
+explicit executable configuration. Cloudflare and Anthropic additionally require
+explicit --tools selection. PHP checks require an explicit HTTP(S) URL.
 Use doctor to see prerequisites and install guidance; no tools are installed.
 Reports include JSON, HTML and SARIF. --out must be an empty directory.
 Exit codes: 0 complete/no findings; 1 complete/findings; 2 incomplete/error.
@@ -46,7 +47,7 @@ export async function main(argv,{stdout=process.stdout,stderr=process.stderr}={}
   try{
     if(Number(process.versions.node.split('.')[0])<22)throw new Error('Node.js 22 or newer is required');
     if(!argv.length||argv[0]==='--help'||argv[0]==='-h'||argv[0]==='help'){say(HELP);return 0;}
-    if(argv[0]==='--version'||argv[0]==='-v'){say('0.1.1');return 0;}
+    if(argv[0]==='--version'||argv[0]==='-v'){say('0.2.0');return 0;}
     const [command,...args]=argv;if(!Object.hasOwn(optionsByCommand,command))throw new Error(`Unknown command: ${command}`);
     if(args.includes('--help')){say(HELP);return 0;}
     const {positional,options}=parseArgs(args,optionsByCommand[command]);

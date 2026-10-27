@@ -1,5 +1,7 @@
 # Sec Hub
 
+> 현재 0.2.0 소스에는 공식 스킬 실행기가 구현되어 있지만, **7개 전체 실제 실행 검증은 미완료**입니다. [진행 상태와 외부 실행 조건](verification/SEVEN-TOOL-STATUS.md)을 확인하세요. 완료 검증된 설치 패키지는 0.1.1입니다.
+
 Sec Hub는 로컬 저장소에 설치된 보안 검사기를 실행하고, 결과를 JSON, SARIF 2.1.0, 단일 HTML 보고서로 저장하는 Node.js CLI입니다. Node.js 22 이상과 내장 모듈만 사용합니다.
 
 검사 대상 저장소의 스크립트를 자동 실행하거나 도구를 설치하지 않습니다. AI 검사기는 `--ai`와 명시적인 설정이 필요합니다. 코드 업로드 가능성이 있는 도구는 실행 전 각 도구의 정책과 설정을 확인하세요. Sec Hub는 자동 패치를 적용하지 않으며 하위 프로세스를 샌드박스라고 부르지 않습니다.
@@ -16,7 +18,7 @@ node bin/sec-hub.mjs --help
 
 ## 명령
 
-CLI adapter는 다음 다섯 가지입니다: Google OSV Scanner (`osv`), NVIDIA SkillSpector (`skillspector`), OpenAI Codex Security (`codex-security`), Alibaba Open Code Review (`open-code-review`), OpenAI PHP2Shell Checker (`php2shell`). 사용 가능 여부와 필요한 자격 증명은 `doctor` 결과를 확인하세요.
+CLI adapter 다섯 가지와 공식 agent workflow 두 가지를 지원합니다. CLI adapter: Google OSV Scanner (`osv`), NVIDIA SkillSpector (`skillspector`), OpenAI Codex Security (`codex-security`), Alibaba Open Code Review (`open-code-review`), OpenAI PHP2Shell Checker (`php2shell`). 공식 agent workflow는 Cloudflare Security Audit (`cloudflare`)와 Anthropic `/vuln-scan` (`anthropic`)입니다. 사용 가능 여부와 필요한 자격 증명은 `doctor` 결과를 확인하세요. `doctor`는 중복 없는 일곱 ID를 반환하고 두 agent의 수동 import 지원은 capability로 표시합니다.
 
 설치 및 설정 상태 확인:
 
@@ -53,7 +55,7 @@ node bin/sec-hub.mjs import cloudflare ./cloudflare-handoff/findings.json --targ
 node bin/sec-hub.mjs import anthropic ./anthropic-handoff/findings.json --target /path/to/repository --out ./sec-hub-import
 ```
 
-가져온 결과의 도구 상태는 `imported`이며 로컬에서 실행한 결과가 아닙니다. 비어 있거나 알 수 없는 데이터 모양은 안전한 무결과로 해석하지 않고 거부합니다. Cloudflare는 공식 native schema의 `confirmed`, `needs_validation`, `rejected`를 지원합니다. `rejected`는 imported 기록의 건수로 보존하지만 취약점 결과로 세지 않습니다. Anthropic은 문서화된 Sec Hub JSON 계약만 지원합니다. upstream 고유 출력 형식은 지원한다고 주장하지 않습니다.
+이 수동 bridge/import 명령은 실제 agent 실행과 별도로 계속 지원합니다. 가져온 결과의 도구 상태는 `imported`이며 로컬에서 실행한 결과가 아닙니다. 비어 있거나 알 수 없는 데이터 모양은 안전한 무결과로 해석하지 않고 거부합니다. Cloudflare는 공식 native schema의 `confirmed`, `needs_validation`, `rejected`를 지원합니다. `rejected`는 imported 기록의 건수로 보존하지만 취약점 결과로 세지 않습니다. Anthropic은 문서화된 Sec Hub JSON 계약만 지원합니다. upstream 고유 출력 형식은 지원한다고 주장하지 않습니다.
 
 ## 도구 설정
 
@@ -91,6 +93,20 @@ node scripts/live-verify-five.mjs --config /absolute/ai-tools.config.json --out 
 
 검증 과정에서 OCR만 재시도한 두 실행을 합칠 때는 `scripts/combine-verified-runs.mjs --original /absolute/initial-run --retry /absolute/ocr-retry --out /absolute/new-combined-run`을 사용할 수 있습니다. 이 helper는 같은 경로·revision과 원래 대상의 실행 전·후·현재 SHA-256, 보존된 네이티브 결과 및 원본 아티팩트 해시를 확인합니다. 초기 실행의 네 도구 완료와 OCR 실패, OCR만 선택한 성공 재시도가 필요합니다. 합친 보고서는 `aggregate` 출처와 두 실행 ID, 원래 실패 이력을 명시하며 두 실행을 한 번의 검사로 표시하지 않습니다. 원래 실행 폴더는 수정하지 않습니다.
 
+## 공식 security skill 실행
+
+[일곱 도구 설정 예시](examples/seven-tools.config.json)의 실행 파일, 공식 checkout, private workRoot 절대 경로를 로컬 환경에 맞게 바꾸세요. 기존 기본 선택은 유지됩니다. 새 두 workflow는 비용 발생을 명확히 선택하도록 반드시 `--tools cloudflare,anthropic` 또는 일곱 ID 전체로 지정해야 합니다. `--ai`만 추가하면 기존 CLI 선택만 확장됩니다.
+
+```sh
+node bin/sec-hub.mjs scan /path/to/repository --ai --tools cloudflare,anthropic --config /absolute/seven-tools.config.json --timeout 1200 --out /absolute/new-native-run
+```
+
+`agentOptions`는 allowlist입니다. 공통 옵션은 `skillRoot`와 `workRoot` (절대 경로), `revision` (공식 pin 40자리 SHA), `model`입니다. Cloudflare는 `effort` (`low|medium|high|xhigh`), `profile: "quick"`, `maxAgents` (7 이상, 기본 10)을 지원합니다. Anthropic은 `maxTurns` (양의 정수, 기본 30), `maxBudgetUsd` (유한한 양수, 기본 3), `mode: "vuln-scan"`, `single: true`, `noScore: true`를 지원합니다. 임의 prompt, patch 설정, 비밀값 설정 및 알 수 없는 옵션은 거부합니다. `command`와 `args`는 기존과 같이 실행 파일과 argv 접두사입니다. upstream CLI의 로그인 상태를 사용하며 Sec Hub는 credential 파일을 읽거나 도구를 설치하지 않습니다.
+
+Cloudflare는 pin `c1c8a8c1471069fb0e188eeaff69b8e8db6564a8`의 공식 security-audit skill을 Codex CLI로 실행합니다. quick profile의 정적 소스 검토이며 동적 exploit 확인을 주장하지 않습니다. 필수 workflow 단계, 공식 validator 두 개, native 위임 증거와 출력물을 확인한 경우에만 완료입니다. Anthropic은 pin `d3bea6b5793b5f3d59a75ebe69a58efa88383145`의 공식 Claude Code `/vuln-scan --single --no-score`를 실행합니다. 정적 candidate 검토이며 C/C++ Docker/gVisor/ASAN reference harness 실행과는 범위가 다릅니다. 두 workflow는 trusted runner의 새 소스 사본을 사용하고 원본과 사본의 입력 소스 보존, native 완료 증거 및 결과 schema를 검증합니다. 입력 수정이나 불완전 증거는 완료로 표시하지 않습니다.
+
+JSON, HTML 및 SARIF의 tool execution 기록에는 mode, backend, source pin, 정적 검토 한계와 동적 검증 상태가 포함됩니다. 서로 다른 실행을 결합한 보고서는 aggregate 출처와 원본 실행 이력을 보존하며 단일 실행으로 표시하지 않습니다. 기존 다섯 CLI 결과와 두 새 workflow의 일곱 도구 검증 방법 및 실제 완료 여부는 새 검증 기록을 확인하세요.
+
 ## 결과 해석
 
 HTML 보고서는 각 도구의 selected/completed/skipped/failed/imported 상태, 실행 범위, 실패 사유, 미실행으로 인한 범위 제한을 함께 표시합니다. finding의 `candidate`, `reported`, `confirmed` 출처 상태를 구분합니다. 모든 검사가 완료되어 finding이 0건이어도 취약점이 없다는 증명은 아닙니다. SARIF에서 `unknown` 심각도는 `level: none`과 `properties.severity: unknown`으로 유지됩니다.
@@ -99,8 +115,8 @@ OSV의 취약점 DB 조회와 SkillSpector의 선택적 advisory 조회는 네�
 
 ## 외부 연결
 
-- [Cloudflare Security Audit Skill](https://github.com/cloudflare/security-audit-skill) — 실행은 별도로 수행하고 결과를 검토해 Sec Hub 브리지로 가져옵니다. 공식 `skills/security-audit/report-schema.json` 형식을 지원합니다.
-- [Anthropic Defending Code Reference Harness](https://github.com/anthropics/defending-code-reference-harness) — 저장소 README에서 유지 관리되지 않는다고 설명하며 라이선스 메타데이터는 `NOASSERTION`입니다. 구현물을 Sec Hub에 포함하지 않습니다. 결과는 Sec Hub 계약 형식으로 변환해야 합니다.
+- [Cloudflare Security Audit Skill](https://github.com/cloudflare/security-audit-skill) — 공식 Codex quick workflow 실행과 수동 bridge import를 지원합니다. 공식 `skills/security-audit/report-schema.json` 형식을 검증합니다.
+- [Anthropic Defending Code Reference Harness](https://github.com/anthropics/defending-code-reference-harness) — 고정한 저장소의 라이선스는 Apache-2.0이며 README는 유지 관리되지 않는다고 설명합니다. 포함된 공식 Claude Code security skill의 정적 `/vuln-scan` mode를 실행합니다. 별도 C/C++ harness 실행은 포함하지 않으며 upstream 구현물을 Sec Hub에 번들하지 않습니다. 수동 import는 Sec Hub 계약 형식을 유지합니다.
 
 양쪽 브리지의 가져오기용 스키마와 예시는 `node bin/sec-hub.mjs bridge <provider> --out <directory>`로 내보낼 수 있습니다. 이 저장소의 예시는 [Cloudflare](examples/cloudflare-bridge.json), [Anthropic](examples/anthropic-bridge.json)입니다.
 
@@ -114,4 +130,4 @@ node --test
 
 ## 이번 빌드의 검증 결과
 
-0.1.1은 자동 테스트 68개를 통과했고, Codex Security와 Open Code Review의 ChatGPT 인증을 포함한 실제 5개 CLI 검사에서 검증용 코드의 결과 13건을 수집했습니다. [통합 HTML 보고서](verification/authenticated-five-combined/report.html)와 [인증·실행 검증 기록](verification/AUTHENTICATED-VALIDATION.md)을 확인할 수 있습니다. 최초 실행과 OCR 예산 조정 재실행의 출처를 보존했으며, 동일 코드의 해시와 원본 결과를 검증해 결합했습니다. 다섯 도구의 실행 경로와 모델·제한 설정은 `verification/authenticated-tools.config.json`에 있습니다. 인증 정보는 패키지에 포함하지 않으며, 다른 기기에서는 도구 설치·로그인과 경로 변경이 필요합니다. Cloudflare/Anthropic은 계속 실행 안내와 결과 가져오기를 제공합니다.
+0.1.1은 자동 테스트 68개를 통과했고, Codex Security와 Open Code Review의 ChatGPT 인증을 포함한 실제 5개 CLI 검사에서 검증용 코드의 결과 13건을 수집했습니다. [통합 HTML 보고서](verification/authenticated-five-combined/report.html)와 [인증·실행 검증 기록](verification/AUTHENTICATED-VALIDATION.md)을 확인할 수 있습니다. 최초 실행과 OCR 예산 조정 재실행의 출처를 보존했으며, 동일 코드의 해시와 원본 결과를 검증해 결합했습니다. 다섯 도구의 실행 경로와 모델·제한 설정은 `verification/authenticated-tools.config.json`에 있습니다. 인증 정보는 패키지에 포함하지 않으며, 다른 기기에서는 도구 설치·로그인과 경로 변경이 필요합니다. 0.2.0은 이 이전 검증 이력을 보존하면서 Cloudflare/Anthropic의 공식 security skill 실제 실행 기능을 추가합니다. 새 일곱 도구 완료 주장은 별도 native 증거 검증 후에만 기록합니다.

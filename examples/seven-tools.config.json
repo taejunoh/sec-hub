@@ -1,0 +1,71 @@
+{
+  "tools": {
+    "osv": {
+      "command": "osv-scanner",
+      "args": []
+    },
+    "skillspector": {
+      "command": "skillspector",
+      "args": []
+    },
+    "codex-security": {
+      "command": "cs",
+      "args": [],
+      "scanOptions": {
+        "auth": "chatgpt",
+        "model": "gpt-6.1-sol",
+        "effort": "medium",
+        "maxCost": 2,
+        "maxTimeMinutes": 3
+      }
+    },
+    "open-code-review": {
+      "command": "ocr",
+      "args": [],
+      "scanOptions": {
+        "provider": "chatgpt",
+        "model": "gpt-6.1-sol",
+        "maxTokensBudget": 40000,
+        "concurrency": 1,
+        "timeoutMinutes": 3,
+        "noPlan": true,
+        "noDedup": true,
+        "noSummary": true
+      }
+    },
+    "php2shell": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/php2shell-checker/skills/phpcheck-url/scripts/phpcheck.js"
+      ]
+    },
+    "cloudflare": {
+      "command": "/absolute/path/to/codex",
+      "args": [],
+      "agentOptions": {
+        "skillRoot": "/absolute/path/to/cloudflare-security-audit",
+        "revision": "c1c8a8c1471069fb0e188eeaff69b8e8db6564a8",
+        "model": "gpt-6.1-sol",
+        "workRoot": "/absolute/private/sec-hub-work",
+        "effort": "medium",
+        "profile": "quick",
+        "maxAgents": 10
+      }
+    },
+    "anthropic": {
+      "command": "/absolute/path/to/claude",
+      "args": [],
+      "agentOptions": {
+        "skillRoot": "/absolute/path/to/anthropic-defending-code",
+        "revision": "d3bea6b5793b5f3d59a75ebe69a58efa88383145",
+        "model": "sonnet",
+        "workRoot": "/absolute/private/sec-hub-work",
+        "mode": "vuln-scan",
+        "single": true,
+        "noScore": true,
+        "maxTurns": 30,
+        "maxBudgetUsd": 3
+      }
+    }
+  }
+}

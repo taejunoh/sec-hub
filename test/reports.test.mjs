@@ -142,3 +142,14 @@ test('aggregate reports identify both source runs and omit a single local scan i
   assert.deepEqual(sarif.runs[0].properties.provenance.sourceRuns.map(item=>item.id),['initial-run','retry-run']);
   assert.equal(sarif.runs[0].properties.toolStates[0].provenance.sourceRunId,'initial-run');
 });
+
+
+test('seven integration aggregates preserve native static coverage and general provenance',async()=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'sec-hub-seven-report-'));
+  const execution={executionMode:'official-vuln-scan-static',backend:'claude',revision:'d3bea6b5793b5f3d59a75ebe69a58efa88383145',limitations:['Static source review only; no Docker/ASAN harness'],dynamicVerification:'not_performed'};
+  const data=run([], [{id:'anthropic',name:'Anthropic',status:'completed',selected:true,findings:[],execution}]);
+  data.provenance={kind:'aggregate',integrationCount:7,workflow:'seven-native-workflows',description:'Seven verified integrations on the same unchanged target.',summary:'Five prior native CLI runs and two official security skill workflows.',sourceRuns:[{id:'five',status:'completed'},{id:'two',status:'completed'}]};
+  const output=await writeReports(data,directory),html=await readFile(output.html,'utf8'),sarif=JSON.parse(await readFile(output.sarif,'utf8'));
+  assert.match(html,/Seven verified integrations/);assert.match(html,/official-vuln-scan-static/);assert.match(html,/no Docker\/ASAN harness/);assert.match(html,/not_performed/);assert.doesNotMatch(html,/OCR retry|Original OCR status/);
+  assert.deepEqual(sarif.runs[0].properties.toolStates[0].execution,execution);assert.equal(sarif.runs[0].invocations,undefined);
+});

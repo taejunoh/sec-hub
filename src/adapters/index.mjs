@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runProcess } from '../processes.mjs';
 import { validateScanOptions } from '../config.mjs';
+import { nativeAgentAdapters } from '../agents/index.mjs';
 
 const MAX_NATIVE_BYTES = 20 * 1024 * 1024;
 const wrapper = fileURLToPath(new URL('./codex-wrapper.mjs', import.meta.url));
@@ -182,5 +183,6 @@ export const adapters = [
   { id: 'codex-security', name: 'OpenAI Codex Security', kind: 'cli', source: sources['codex-security'], requiresAI: true, network: 'Code and context may be uploaded to the configured model provider', install: 'npm install -g @openai/codex-security@0.7.0', check: ctx => probe(ctx, 'codex-security', 'cs'), build: ctx => ({ command: process.execPath, args: [wrapper, JSON.stringify({ ...executable(ctx, 'codex-security', 'cs'), target: ctx.target, artifactDir: ctx.artifactDir, scanArgs: scanArgs(ctx, 'codex-security') })], successCodes: [0], findingCodes: [1] }), parse: parseCodex },
   { id: 'open-code-review', name: 'Alibaba Open Code Review', kind: 'cli', source: sources['open-code-review'], requiresAI: true, network: 'Code and context may be uploaded to the configured model provider; native OCR may write session metadata', install: 'npm install -g @alibaba-group/open-code-review@1.13.3', check: ctx => probe(ctx, 'open-code-review', 'ocr'), build: ctx => command(ctx, 'open-code-review', 'ocr', ['scan', '--repo', ctx.target, '--format', 'json', '--output', join(ctx.artifactDir, 'native.json'), ...scanArgs(ctx, 'open-code-review')]), parse: parseOCR },
   { id: 'php2shell', name: 'OpenAI PHP2Shell Checker (header heuristic)', kind: 'cli', source: sources.php2shell, requiresAI: false, network: 'HEAD, with GET fallback on 405/501, to the explicitly provided URL only; no redirects followed', install: 'git clone https://github.com/openai/php2shell-checker.git; configure command node and args [absolute path to phpcheck.js]', check: ctx => probe(ctx, 'php2shell', 'phpcheck.js'), build: ctx => command(ctx, 'php2shell', 'phpcheck.js', [ctx.url, '--json'], [1, 3]), parse: parsePHP },
+  ...nativeAgentAdapters,
 ];
 export function getAdapter(id) { return adapters.find(adapter => adapter.id === id); }

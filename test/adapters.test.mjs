@@ -14,11 +14,11 @@ async function parse(id, payload, exitCode = 0) {
   return getAdapter(id).parse({ artifactDir, target: '/repo', url: 'http://localhost:8080/', stdout: JSON.stringify(payload), stderr: '', exitCode });
 }
 
-test('exactly five official CLI adapters expose the public contract', () => {
-  assert.deepEqual(adapters.map(a => a.id), ['osv', 'skillspector', 'codex-security', 'open-code-review', 'php2shell']);
+test('seven official integrations expose the public contract', () => {
+  assert.deepEqual(adapters.map(a => a.id), ['osv', 'skillspector', 'codex-security', 'open-code-review', 'php2shell', 'cloudflare', 'anthropic']);
   assert.equal(getAdapter('missing'), undefined);
   for (const a of adapters) {
-    assert.equal(a.kind, 'cli');
+    assert.equal(a.kind, ['cloudflare','anthropic'].includes(a.id) ? 'agent' : 'cli');
     assert.match(a.source, /^https:\/\/github.com\//);
     assert.equal(typeof a.requiresAI, 'boolean');
     assert.equal(typeof a.check, 'function');
@@ -160,11 +160,11 @@ test('Codex parser rejects missing identity evidence and OCR detects native revi
   await assert.rejects(parse('open-code-review', ocr), e => e.findings?.length === 1);
 });
 
-test('prerequisite probes execute only --version and reject missing executables', async () => {
+test('CLI prerequisite probes execute only --version and reject missing executables', async () => {
   const artifactDir = await mkdtemp(join(tmpdir(), 'sec-probe-'));
   const fake = join(artifactDir, 'probe.mjs');
   await writeFile(fake, `if (process.argv[2] !== '--version') process.exit(5); console.log('scanner 1.2.3');`);
-  for (const a of adapters) {
+  for (const a of adapters.filter(adapter=>adapter.kind==='cli')) {
     const config = { tools: { [a.id]: { command: process.execPath, args: [fake] } } };
     const result = await a.check({ config, url: 'http://localhost/', artifactDir });
     assert.equal(result.available, true, a.id + ': ' + result.reason);

@@ -103,7 +103,13 @@ function aggregateNotice(run) {
     const link = typeof source.link === 'string' && /^\.{1,2}\//.test(source.link) && !/[\\\x00-\x1f]/.test(source.link) ? `<a href="${esc(source.link)}">${esc(source.id)}</a>` : esc(source.id);
     return `<li>${link} · ${esc(source.status)}</li>`;
   }).join('');
-  return `<section class="panel"><h2>Aggregate verification</h2><p>Results from the initial run plus an OCR retry on the same unchanged target. Source runs retain their original execution states and native artifacts.</p><ul>${sources}</ul><p>Original OCR status: ${esc(run.provenance.retry?.previousStatus)} · retry reason: ${esc(run.provenance.retry?.reason)}.</p></section>`;
+
+  const description=run.provenance.description ?? (run.provenance.retry ? 'Results from the initial run plus an OCR retry on the same unchanged target.' : 'Results combined from verified source runs on the same unchanged target.');
+  const summary=run.provenance.summary ? '<p>'+esc(stringify(run.provenance.summary))+'</p>' : '';
+  const workflow=run.provenance.workflow ? '<p>Workflow: '+esc(stringify(run.provenance.workflow))+(run.provenance.integrationCount ? ' · '+esc(run.provenance.integrationCount)+' integrations' : '')+'</p>' : '';
+  const retry=run.provenance.retry ? '<p>Original OCR status: '+esc(run.provenance.retry.previousStatus)+' · retry reason: '+esc(run.provenance.retry.reason)+'.</p>' : '';
+  return '<section class="panel"><h2>Aggregate verification</h2><p>'+esc(description)+' Source runs retain their original execution states and native artifacts.</p>'+summary+workflow+'<ul>'+sources+'</ul>'+retry+'</section>';
+
 }
 
 function renderHtml(run, findings) {
@@ -118,7 +124,7 @@ function renderHtml(run, findings) {
     const refs = finding.references.map((reference) => { const href = safeLink(reference); return href ? `<a rel="noreferrer" href="${esc(href)}">${esc(reference)}</a>` : `<span>${esc(reference)}</span>`; }).join(' · ');
     return `<article class="finding"><div class="finding-head"><span class="badge ${esc(finding.severity)}">${esc(finding.severity)}</span><h3>${esc(finding.title)}</h3></div><p class="muted">${esc(locationLabel(finding.location))}</p><p>${esc(finding.description ?? 'No description supplied.')}</p><p class="meta">Provenance: ${esc(finding.verification ?? 'reported')} · Sources: ${esc(finding.sources.join(', '))}</p>${finding.aliases.length ? `<p class="meta">Advisories: ${esc(finding.aliases.join(', '))}</p>` : ''}${refs ? `<p class="meta">References: ${refs}</p>` : ''}${finding.sourceRecords.map((record) => record.evidence === undefined ? '' : `<details><summary>Evidence from ${esc(record.toolId)}</summary><pre>${esc(stringify(record.evidence))}</pre></details>`).join('')}</article>`;
   }).join('') : '<p class="empty">0 findings. This means these completed checks reported no findings; it does not prove the target is free of vulnerabilities.</p>';
-  const toolRows = tools.map((tool) => `<tr><td>${esc(tool.name ?? tool.id)}</td><td>${esc(tool.status)}</td><td>${esc(tool.source ?? '')}</td><td>${esc(Array.isArray(tool.findings) ? tool.findings.length : tool.findings ?? 0)}</td><td>${esc([tool.reason, tool.provenance?.sourceRunId && `Source run: ${tool.provenance.sourceRunId}`].filter(Boolean).join(' · '))}</td></tr>`).join('');
+  const toolRows = tools.map((tool) => `<tr><td>${esc(tool.name ?? tool.id)}</td><td>${esc(tool.status)}</td><td>${esc(tool.source ?? '')}</td><td>${esc(Array.isArray(tool.findings) ? tool.findings.length : tool.findings ?? 0)}</td><td>${esc([tool.reason, tool.provenance?.sourceRunId && `Source run: ${tool.provenance.sourceRunId}`].filter(Boolean).join(' · '))}${tool.execution ? `<details><summary>Execution mode and coverage</summary><pre>${esc(stringify(tool.execution))}</pre></details>` : ''}</td></tr>`).join('');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sec Hub report · ${esc(run.id)}</title>
 <style>
@@ -143,7 +149,7 @@ function toSarif(run, findings) {
   const ruleIndex = new Map(ruleList.map((rule, index) => [rule.id, index]));
   const aggregate = run.provenance?.kind === 'aggregate';
   const importedOnly = run.tools.length > 0 && run.tools.every((tool) => tool.status === 'imported');
-  const toolStates = run.tools.map(({ id, status, source, selected, reason, provenance }) => ({ id, status, ...(source ? { source } : {}), ...(selected !== undefined ? { selected } : {}), ...(reason ? { reason } : {}), ...(provenance ? { provenance } : {}) }));
+  const toolStates = run.tools.map(({ id, status, source, selected, reason, provenance, execution }) => ({ id, status, ...(source ? { source } : {}), ...(selected !== undefined ? { selected } : {}), ...(reason ? { reason } : {}), ...(provenance ? { provenance } : {}), ...(execution ? { execution: clone(execution) } : {}) }));
   const sarifRun = {
     tool: { driver: { name: 'Sec Hub', informationUri: 'https://github.com/openai/sec-hub', rules: ruleList } },
     properties: { runId: run.id, target: run.target.path, status: run.status, provenance: aggregate ? clone(run.provenance) : importedOnly ? 'imported' : 'local', toolStates },
