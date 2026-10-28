@@ -2,7 +2,11 @@
 
 > 0.2.2는 Open Code Review 0.2.1 재검사의 고위험 #9·#12와 중간 심각도 19건을 수정한 안정화 버전입니다. 중간 후보 #13은 기존 pinned 공식 검증기가 이미 차단해 반증됐습니다. 새 테스트 57개를 포함해 Node 24 전체 **385/385 통과**, 명세·독립 품질 검토도 통과했습니다. [0.2.2 패키지](releases/sec-hub-local-0.2.2.tgz), [22건 판정·수정·실행 검증 보고서](verification/release-0.2.2/REPORT.md), [전체 테스트 로그](verification/release-0.2.2/evidence/full-suite-node24.log)를 확인하세요.
 
-이번 패키지는 이전 checkout에서 수정했던 고위험 #38(가림 실패 후 원문 잔존)·#41(POSIX 경로 검증 우회)도 포함합니다. 기존 0.2.1 배포 파일과 44개 native 후보의 [원본 재검사 기록](verification/ocr-0.2.1-assessment/REPORT.md), [이전 두 수정 기록](verification/high2-remediation/REPORT.md)은 그대로 보존합니다. 이번 버전 뒤 새 native 검사는 실행하지 않았습니다. Windows 하위 프로세스 종료 #31과 동시 ancestor 교체 경합 #40은 별도 조건부 후보로 남고, 낮은 심각도 권고는 이번 수정 범위 밖입니다. 7개 도구 통합은 기존 cohort의 6/7이며 Anthropic은 계속 보류합니다. [7개 도구 상태](verification/SEVEN-TOOL-STATUS.md), [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md).
+기존 0.2.2 release archive는 이전 source checkout의 고위험 #38(가림 실패 후 원문 잔존)·#41(POSIX 경로 검증 우회) 수정과 검증을 포함합니다. 0.2.1 배포 파일과 44개 native 후보의 [원본 재검사 기록](verification/ocr-0.2.1-assessment/REPORT.md), [이전 두 수정 기록](verification/high2-remediation/REPORT.md)은 보존되어 있습니다. 0.2.2 archive는 그대로이며 #31/#40 후속 수정은 그 패키지에 포함되지 않습니다.
+
+현재 source checkout에는 Windows 하위 프로세스 종료 #31과 ancestor 교체 경계 #40의 로컬 수정이 있습니다. Node 24 전체 suite는 424개 중 423 pass, 0 fail, 1 native Windows skip으로 통과했습니다. Anthropic은 계속 보류합니다. #31의 `taskkill /T /F`는 Darwin에서 OS 경계 모의로 확인했으며 실제 Windows 실행은 검증하지 않았습니다. #40은 root와 현재 effective UID를 trusted ancestor로 간주하는 권한 정책을 강제하며, 같은 UID의 악의적 process가 일으키는 directory-swap은 여전히 범위 밖입니다. [#31/#40 로컬 수정·검증 보고서](verification/high31-40-remediation/REPORT.md).
+
+이 보안 경계에는 배포 영향이 있습니다. Windows에서는 safe filesystem helper가 필요한 report write뿐 아니라 source/skill-root read도 fail closed합니다. macOS에서는 shared writable ancestor(고정 sticky `/tmp` 포함)와 ALLOW/unknown ACL을 거부하고, ancestor별 ACL 확인이 startup·source 검사·보고서 저장 시간을 늘립니다. Linux의 mode/sticky 정책은 native Linux에서 실행 검증하지 않았습니다. Darwin ACL helper는 macOS arm64에서 실행했고 universal x86_64 slice는 별도로 native 실행하지 않았습니다.
 
 기존 Cloudflare 실행은 정적 source-only quick coverage로, 두 개의 미확정 후보와 unknown 심각도를 기록했습니다. SARIF 스키마·인증정보 패턴 검사와 HTML·증거 링크 QA를 완료했습니다. 이는 7개 검증 완료나 동적 악용 확인을 뜻하지 않습니다. 활성화된 1회 후속 작업은 2026년 10월 29일 오전 6:10(뉴욕 시간)에 Anthropic native canary, 정적 검사, 최종 집계만 수행합니다.
 
@@ -20,7 +24,7 @@ node bin/sec-hub.mjs --help
 
 `npm install`은 런타임 의존성을 추가하지 않습니다. 전역 명령이 필요하면 선택적으로 `npm link`를 실행할 수 있습니다. 기본 사용은 `node bin/sec-hub.mjs`입니다.
 
-npm 패키지에는 CLI, 런타임, 예시와 README만 포함됩니다. 유지 관리 스크립트는 저장소 checkout에서만 사용할 수 있으며 설치 패키지에는 포함되지 않습니다. 실행 증거는 저장소의 `verification/`에 남습니다. 0.2.2의 패키징·로컬 실행 검증은 새 native 검사나 7개 도구 통합 완료를 뜻하지 않습니다.
+현재 checkout에서 생성하는 npm 패키지에는 CLI, 런타임, 예시와 README가 포함됩니다. 저장소의 `scripts/` 유지 관리 도구는 설치 패키지에서 제외됩니다. `src/native/` 아래 Darwin ACL reader binary, C source와 maintainer build script는 포함되며, build script는 provenance/rebuild 용도이고 CLI runtime에서 실행하거나 컴파일러를 호출하지 않습니다. 기존 0.2.2 release archive는 이 후속 helper를 포함하지 않습니다. 실행 증거는 저장소의 `verification/`에 남습니다.
 
 ## 명령
 
