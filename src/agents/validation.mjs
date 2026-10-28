@@ -63,11 +63,75 @@ function terminalFailureReason(id,outcome){
   if(id==='anthropic'&&outcome.category==='auth_expired')return 'Native Claude OAuth session expired and could not be refreshed; complete native Claude sign-in before retrying.';
   return outcome.reason;
 }
+// Parse telemetry only; never evaluate shell text. A small literal grammar keeps
+// quoted echoes, comments, expansions and unrelated path substrings out of proof.
+function literalCommands(command){
+  // Validate the entire raw line before comments can truncate parsing. The same
+  // check runs again on a decoded shell wrapper's command string.
+  if(typeof command!=='string'||/[\x00-\x1f\x7f]/.test(command))return null;
+  const commands=[],words=[];let word='',quote=null,started=false;
+  const push=()=>{if(started){words.push(word);word='';started=false;}};
+  for(let i=0;i<command.length;i++){
+    const ch=command[i];if(/[\x00-\x1f\x7f]/.test(ch))return null;
+    if(quote==="'"){if(ch==="'")quote=null;else word+=ch;continue;}
+    if(quote==='"'){
+      if(ch==='"'){quote=null;continue;}
+      if(ch==='\\'){const next=command[++i];if(next===undefined)return null;word+='\\"$`'.includes(next)?next:'\\'+next;continue;}
+      if(ch==='$'||ch==='`')return null;word+=ch;continue;
+    }
+    if(ch==="'"||ch==='"'){quote=ch;started=true;continue;}
+    if(ch==='\\'){const next=command[++i];if(next===undefined||/[\x00-\x1f\x7f]/.test(next))return null;word+=next;started=true;continue;}
+    if(ch==='#'&&!started)break;
+    // Only success-chained commands establish a subsequent relative cwd.
+    // A semicolon can mask failed cd/read commands with a later successful read.
+    if(ch===';')return null;
+    if(ch==='&'&&command[i+1]==='&'){
+      i++;push();if(!words.length)return null;commands.push(words.splice(0));continue;
+    }
+    if(/[|&<>`$()]/.test(ch))return null;
+    // With raw controls excluded, only ASCII space separates shell words.
+    // Unicode whitespace belongs to a literal filename, not a comment boundary.
+    if(ch===' '){push();continue;}word+=ch;started=true;
+  }
+  if(quote)return null;push();if(!words.length)return null;commands.push(words);return commands;
+}
+function pinnedInstructionRead(command,options){
+  let commands=literalCommands(command);if(!commands)return false;
+  const wrapper=commands[0];
+  if(commands.length===1&&/^\/(?:bin|usr\/bin)\/(?:zsh|bash|sh)$/.test(wrapper[0])){
+    if(wrapper.length!==3||!['-c','-lc'].includes(wrapper[1]))return false;
+    commands=literalCommands(wrapper[2]);if(!commands)return false;
+  }
+  if(typeof options.skillRoot!=='string')return false;
+  let cwd=options.copyTarget?resolve(options.copyTarget,'../runner'):null,read=false;
+  const pinned=resolve(options.skillRoot,'skills/security-audit/SKILL.md'),alias=cwd?resolve(cwd,'.agents/skills/security-audit/SKILL.md'):null;
+  const literalPath=path=>typeof path==='string'&&path.length>0&&!/[\x00-\x1f\x7f*?\[\]{}~]/.test(path);
+  const count=value=>/^[1-9]\d*$/.test(value??'')&&Number.isSafeInteger(Number(value));
+  for(const words of commands){
+    const [tool,...args]=words;
+    if(tool==='cd'){
+      const paths=args[0]==='--'?args.slice(1):args;if(paths.length!==1||!literalPath(paths[0])||paths[0].startsWith('-')||!isAbsolute(paths[0])&&!cwd)return false;
+      cwd=resolve(cwd??'/',paths[0]);continue;
+    }
+    let paths=[];
+    if(tool==='cat'){
+      let i=0;for(;i<args.length&&args[i].startsWith('-');i++){if(args[i]==='--'){i++;break;}if(!['-n','-b'].includes(args[i]))return false;}paths=args.slice(i);
+    }else if(tool==='sed'){
+      if(args[0]!=='-n'||!/^([1-9]\d*)(?:,([1-9]\d*))?p$/.test(args[1]??''))return false;paths=args.slice(2);
+    }else if(tool==='head'){
+      let i=0;if(args[0]==='-n'||args[0]==='-c'){if(!count(args[1]))return false;i=2;}else if(/^-[0-9]+$/.test(args[0]??'')){if(!count(args[0].slice(1)))return false;i=1;}if(args[i]==='--')i++;paths=args.slice(i);
+    }else return false;
+    if(!paths.length||paths.some(path=>!literalPath(path)||path.startsWith('-')||!isAbsolute(path)&&!cwd))return false;
+    if(paths.some(path=>{const file=resolve(cwd??'/',path);return file===pinned||file===alias;}))read=true;
+  }
+  return read;
+}
+
 export function inspectNativeEvents(id,events,options={}){
   const terminalOutcome=inspectTerminalOutcome(id,events,options.exitCode),terminalReason=terminalFailureReason(id,terminalOutcome),reasons=terminalReason?[terminalReason]:[];
   if(id==='cloudflare'){
     const completed=events.filter(e=>e.type==='item.completed').map(e=>e.item).filter(Boolean);
-    const instructionRead=completed.some(i=>i.type==='command_execution'&&i.status==='completed'&&i.exit_code===0&&/(?:cat|sed|head|read_file)/.test(i.command??'')&&(i.command??'').includes('SKILL.md')&&((i.command??'').includes(options.skillRoot??'__no-root__')||(i.command??'').includes('.agents/skills/security-audit/SKILL.md')));
+    const instructionRead=completed.some(i=>i.type==='command_execution'&&i.status==='completed'&&i.exit_code===0&&pinnedInstructionRead(i.command,options));
     if(options.skillRoot&&!instructionRead)reasons.push('Missing native pinned security-audit instruction read');
     const spawns=completed.filter(i=>i.type==='collab_tool_call'&&i.tool==='spawn_agent'&&i.status==='completed');
     const roleNames=['recon-architecture','recon-boundaries','recon-execution','recon-companions','hunter','critic-final','verifier'];
@@ -124,10 +188,11 @@ export function parseAnthropicDocument(doc,{copyTarget,inputs,artifactDir}){
   });
   if(Object.keys(counts).some(k=>doc.summary[k]!==counts[k]))throw new Error('Anthropic native summary counts disagree');return findings;
 }
-export async function verifySourcePin(id,options){
+export async function verifySourcePin(id,options,{signal}={}){
+  signal?.throwIfAborted();
   if(options.revision!==PINS[id])throw new Error('Unsupported official source pin');
   const root=await assertSafeDirectory(options.skillRoot);
-  const git=async args=>(await execute('git',['--no-replace-objects','--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null','-C',root,...args],{timeout:10000,maxBuffer:2*1024*1024,env:{PATH:process.env.PATH,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1'}})).stdout;
+  const git=async args=>{signal?.throwIfAborted();const result=await execute('git',['--no-replace-objects','--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null','-C',root,...args],{timeout:10000,maxBuffer:2*1024*1024,signal,env:{PATH:process.env.PATH,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1'}});signal?.throwIfAborted();return result.stdout;};
   if((await git(['rev-parse','--show-toplevel'])).trim()!==root||(await git(['rev-parse','HEAD'])).trim()!==PINS[id])throw new Error('Official source checkout must match pinned revision');
   if((await git(['for-each-ref','--format=%(refname)','refs/replace/'])).trim())throw new Error('Official source replacement refs are unsupported');
   const tree=await git(['ls-tree','-r','-z','--full-tree',PINS[id]]),tracked=new Map(),directories=new Set();
@@ -164,10 +229,11 @@ export async function verifySourcePin(id,options){
   if(id==='anthropic'){const settings=JSON.parse(files.get('.claude/settings.json').toString());if(JSON.stringify(settings)!==JSON.stringify({env:{ANTHROPIC_CUSTOM_HEADERS:'anthropic-cyber-runbook: skills'}}))throw new Error('Unsupported pinned project settings');}
   return instructions.sort((a,b)=>a.path.localeCompare(b.path));
 }
-export async function runOfficialValidators(options,artifactDir){
-  await verifySourcePin('cloudflare',options);
+export async function runOfficialValidators(options,artifactDir,{signal}={}){
+  signal?.throwIfAborted();await verifySourcePin('cloudflare',options,{signal});signal?.throwIfAborted();
   const results=[];for(const [script,file] of [['validate-findings.cjs','findings.json'],['validate-coverage-ledger.cjs','coverage-ledger.json']]){
-    try{const result=await execute(process.execPath,[join(options.skillRoot,'skills/security-audit',script),join(artifactDir,file)],{timeout:10000,maxBuffer:256*1024});results.push({script,exitCode:0,stdout:result.stdout.trim()});}catch(error){results.push({script,exitCode:typeof error.code==='number'?error.code:1,stderr:String(error.stderr??'validator failed').slice(0,10000)});}
+    signal?.throwIfAborted();
+    try{const result=await execute(process.execPath,[join(options.skillRoot,'skills/security-audit',script),join(artifactDir,file)],{timeout:10000,maxBuffer:256*1024,signal});results.push({script,exitCode:0,stdout:result.stdout.trim()});}catch(error){signal?.throwIfAborted();results.push({script,exitCode:typeof error.code==='number'?error.code:1,stderr:String(error.stderr??'validator failed').slice(0,10000)});}
   }return results;
 }
 export async function finalizeNativeExecution(id,ctx){
@@ -216,7 +282,7 @@ export async function validateNativeExecution(id,ctx){
     if(validators.every(x=>x.exitCode===0)&&Array.isArray(doc)){native.independentRecords=verifyCloudflareRecords(doc,events,native);findings=doc.filter(f=>f.verdict!=='rejected').map(f=>{const loc=f.trace[0],input=manifest.inputs.find(x=>x.path===loc.file);if(!input||loc.line>input.lines)throw new Error('Cloudflare invalid finding location');if(f.verdict==='confirmed')reasons.push('Source-only workflow cannot retain dynamic confirmation');return {toolId:id,ruleId:f.fingerprint,title:f.title,description:f.description,severity:f.verdict==='needs_validation'?'unknown':f.severity.overall_severity==='informational'?'info':f.severity.overall_severity,verification:'candidate',location:{path:loc.file,line:loc.line},evidence:{native:f,dynamicVerification:'not-performed'},rawRef:join(ctx.artifactDir,'findings.json')};});}
   }else findings=parseAnthropicDocument(JSON.parse((await safeRead(join(ctx.artifactDir,'VULN-FINDINGS.json'))).toString()),{copyTarget:manifest.copyTarget,inputs:manifest.inputs,artifactDir:ctx.artifactDir});
   if(ctx.exitCode!==0||manifest.process?.exitCode!==0||manifest.process?.interrupted||manifest.process?.outputLimitExceeded)reasons.push('Native process did not exit successfully');
-  if(manifest.status!=='complete')reasons.push(...(manifest.reasons??['Wrapper marked execution incomplete']));
+  if(manifest.status!=='complete')reasons.push('Wrapper marked execution incomplete',...(Array.isArray(manifest.reasons)?manifest.reasons:[]));
   const execution={mode:id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',backend:id==='cloudflare'?'codex':'claude',...(id==='cloudflare'?{strategy:options.strategy}:{}),sourceCommit:PINS[id],source:SOURCES[id],model:manifest.model,backendVersion:manifest.backendVersion,manifestPath:join(ctx.artifactDir,'execution-manifest.json'),dynamicVerification:'not-performed',limitations:id==='cloudflare'?['Source-only; target execution was not authorized.','Quick profile is partial coverage.']:['Static source candidates only; C/C++ Docker/gVisor/ASAN pipeline was not executed.'],nativeEvidence:native,validators,retainedHashes,hashScope:'retained bytes after redaction',sourcePreserved:true};
   if(reasons.length){const error=new Error(`${id}: native workflow incomplete: ${[...new Set(reasons)].join('; ')}`);error.findings=findings;error.execution=execution;throw error;}if(!manifest.finalRetainedHashes)prevalidated.set(resolve(ctx.artifactDir),sha256(manifestBytes));return {findings,execution};
 }

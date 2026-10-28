@@ -60,19 +60,25 @@ export function normalizeFindings(findings) {
   const groups = [];
   for (const finding of normalized) {
     const key = dependencyKey(finding);
-    const match = key && groups.find((group) => {
+    const matches = key ? groups.filter((group) => {
       const other = dependencyKey(group);
       return other && key.packageName === other.packageName && key.version === other.version && [...key.aliases].some((alias) => other.aliases.has(alias));
-    });
+    }) : [];
+    const match = matches[0];
     if (!match) {
       groups.push({ ...finding, sources: uniq([finding.toolId, ...(finding.sources ?? [])]), sourceRecords: finding.sourceRecords?.length ? clone(finding.sourceRecords) : [clone(finding)] });
       continue;
     }
-    match.sources = uniq([...match.sources, finding.toolId]);
-    match.aliases = uniq([...match.aliases, ...finding.aliases]);
-    match.references = uniq([...match.references, ...finding.references]);
-    match.sourceRecords.push(...(finding.sourceRecords?.length ? clone(finding.sourceRecords) : [clone(finding)]));
-    if (severityRank(finding.severity) > severityRank(match.severity)) match.severity = finding.severity;
+    // Existing groups are disjoint alias components. A bridge record can join
+    // several of them; retain the first representative and all original lineage.
+    for (const incoming of [...matches.slice(1), finding]) {
+      match.sources = uniq([...match.sources, incoming.toolId, ...(incoming.sources ?? [])]);
+      match.aliases = uniq([...match.aliases, ...incoming.aliases]);
+      match.references = uniq([...match.references, ...incoming.references]);
+      match.sourceRecords.push(...(incoming.sourceRecords?.length ? clone(incoming.sourceRecords) : [clone(incoming)]));
+      if (severityRank(incoming.severity) > severityRank(match.severity)) match.severity = incoming.severity;
+    }
+    for (const joined of matches.slice(1)) groups.splice(groups.indexOf(joined), 1);
   }
   return groups;
 }
@@ -155,7 +161,8 @@ function toSarif(run, findings) {
     properties: { runId: run.id, target: run.target.path, status: run.status, provenance: aggregate ? clone(run.provenance) : importedOnly ? 'imported' : 'local', toolStates },
     results: findings.map((finding) => {
       const result = { ruleId: `${finding.toolId}:${finding.ruleId}`, ruleIndex: ruleIndex.get(`${finding.toolId}:${finding.ruleId}`), level: ({ critical: 'error', high: 'error', medium: 'warning', low: 'note', info: 'note', unknown: 'none' })[finding.severity], message: { text: finding.description ?? finding.title }, properties: { severity: finding.severity, verification: finding.verification ?? 'reported', sources: finding.sources, aliases: finding.aliases } };
-      if (finding.location.path || safeLink(finding.location.url ?? '')) result.locations = [{ physicalLocation: { artifactLocation: { uri: sarifUri(finding.location.path ?? safeLink(finding.location.url)), ...(safeLink(finding.location.url ?? '') ? { properties: { url: safeLink(finding.location.url) } } : {}) }, ...(finding.location.line ? { region: { startLine: finding.location.line } } : {}) } }];
+      const url = safeLink(finding.location.url ?? '');
+      if (finding.location.path || url) result.locations = [{ physicalLocation: { artifactLocation: { uri: finding.location.path ? sarifUri(finding.location.path) : url, ...(url ? { properties: { url } } : {}) }, ...(finding.location.line ? { region: { startLine: finding.location.line } } : {}) } }];
       if (finding.references.length) result.relatedLocations = finding.references.map((uri, index) => ({ id: index, message: { text: 'Reference' }, physicalLocation: { artifactLocation: { uri: safeLink(uri) ? uri : `external/${index}` } } }));
       if (finding.aliases.length) result.fingerprints = { 'sec-hub/advisoryAliases': finding.aliases.slice().sort().join('|') };
       return result;

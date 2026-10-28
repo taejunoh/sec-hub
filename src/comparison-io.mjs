@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, lstat, realpath, readdir, stat } from 'node:fs/promises';
+import { open, lstat, realpath, readdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicWriteFile, ensureSafeDirectory } from './safe-io.mjs';
 import { redactValue } from './redaction.mjs';
@@ -194,12 +194,6 @@ async function preflightOutput(directory, inputs) {
   for (const source of [...files, ...roots]) {
     if (isWithin(source, out) || isWithin(out, source)) throw new Error('Output overlaps a comparison input.');
   }
-  try {
-    const info = await lstat(out);
-    if (!info.isDirectory() || (await readdir(out)).length > 0) throw new Error('Comparison output directory is occupied.');
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
   return out;
 }
 
@@ -207,12 +201,34 @@ async function preflightOutput(directory, inputs) {
 export async function writeComparisonReports(comparison, directory, { inputs = [] } = {}) {
   const outputDirectory = await preflightOutput(directory, inputs);
   await ensureSafeDirectory(outputDirectory);
-  const safe = stable(redactValue(comparison));
-  const json = path.join(outputDirectory, 'comparison.json');
-  const html = path.join(outputDirectory, 'comparison.html');
-  await Promise.all([
-    atomicWriteFile(json, `${JSON.stringify(safe, null, 2)}\n`, { mode: 0o600 }),
-    atomicWriteFile(html, renderHtml(safe), { mode: 0o600 }),
-  ]);
-  return { json, html };
+  const lock = path.join(outputDirectory, '.comparison.lock');
+  let reservation;
+  try {
+    reservation = await open(lock, 'wx', 0o600);
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error('Comparison output reservation exists (.comparison.lock). Verify that no writer is active, then remove the stale lock manually before retrying.');
+    throw error;
+  }
+  let owned;
+  try {
+    owned = await reservation.stat();
+    // Occupancy is decided only after this writer exclusively owns the reservation.
+    if ((await readdir(outputDirectory)).some((name) => name !== '.comparison.lock')) throw new Error('Comparison output directory is occupied.');
+    const safe = stable(redactValue(comparison));
+    const json = path.join(outputDirectory, 'comparison.json');
+    const html = path.join(outputDirectory, 'comparison.html');
+    const writes = await Promise.allSettled([
+      atomicWriteFile(json, `${JSON.stringify(safe, null, 2)}\n`, { mode: 0o600 }),
+      atomicWriteFile(html, renderHtml(safe), { mode: 0o600 }),
+    ]);
+    const failure = writes.find((result) => result.status === 'rejected');
+    if (failure) throw failure.reason;
+    return { json, html };
+  } finally {
+    try {
+      const current = await lstat(lock);
+      if (owned && current.dev === owned.dev && current.ino === owned.ino) await unlink(lock);
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    finally { await reservation.close(); }
+  }
 }

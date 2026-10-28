@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
-import { compareRuns } from '../compare.mjs';
+import { compareRuns, comparisonGate } from '../compare.mjs';
 import { normalizeFindings } from '../reports.mjs';
 
 const HARD = Object.freeze({ directoryEntries: 512, artifacts: 128, artifactBytes: 20 * 1024 * 1024, totalBytes: 64 * 1024 * 1024, findingLeavesPerRun: 5000, findingLeavesTotal: 20000 });
@@ -152,6 +152,7 @@ function validComparison(payload, limits, state) {
   for (const side of [payload.baseline, payload.current]) {
     if (!isObject(side) || !nonempty(side.id) || !isObject(side.target) || !nonempty(side.target.path) || !path.posix.isAbsolute(side.target.path) || !['completed', 'partial', 'failed'].includes(side.status)) throw coded('invalid_artifact');
   }
+  if (path.posix.resolve('/', payload.baseline.target.path) !== path.posix.resolve('/', payload.current.target.path)) throw coded('invalid_artifact');
   if (!Array.isArray(payload.coverage) || !Array.isArray(payload.entries) || !Array.isArray(payload.notices) || payload.notices.some((item) => typeof item !== 'string')) throw coded('invalid_artifact');
   const toolIds = new Set();
   for (const item of payload.coverage) {
@@ -161,13 +162,20 @@ function validComparison(payload, limits, state) {
   }
   const counts = Object.fromEntries(CATEGORIES.map((category) => [category, 0]));
   const ids = new Set();
+  const gateEntries = [];
   for (const entry of payload.entries) {
     if (!isObject(entry) || !nonempty(entry.id) || ids.has(entry.id) || !nonempty(entry.identity) || !METHODS.has(entry.identityMethod) || !CATEGORIES.includes(entry.category) || !Array.isArray(entry.reasons) || entry.reasons.some((reason) => typeof reason !== 'string')) throw coded('invalid_artifact');
     ids.add(entry.id); counts[entry.category] += 1;
     const hasBefore = entry.before !== undefined, hasAfter = entry.after !== undefined;
     if ((entry.category === 'new' && (hasBefore || !hasAfter)) || (['resolved', 'unobserved'].includes(entry.category) && (!hasBefore || hasAfter)) || (['existing', 'regressed'].includes(entry.category) && (!hasBefore || !hasAfter))) throw coded('invalid_artifact');
-    for (const snapshot of [entry.before, entry.after].filter((value) => value !== undefined)) {
-      try { const normalized = normalizeFindings([snapshot]); if (normalized.length !== 1 || !SEVERITIES.has(normalized[0].severity)) throw new Error(); } catch { throw coded('invalid_artifact'); }
+    for (const field of ['before', 'after']) {
+      const snapshot = entry[field];
+      if (snapshot === undefined) continue;
+      try {
+        const normalized = normalizeFindings([snapshot]);
+        if (normalized.length !== 1 || !SEVERITIES.has(normalized[0].severity)) throw new Error();
+        if (field === 'after' && ['new', 'regressed'].includes(entry.category)) gateEntries.push({ id: entry.id, category: entry.category, after: { severity: normalized[0].severity } });
+      } catch { throw coded('invalid_artifact'); }
     }
   }
   if (payload.entries.length + state.findings + state.comparisonEntries > limits.findingLeavesTotal) throw coded('artifact_too_large');
@@ -175,6 +183,12 @@ function validComparison(payload, limits, state) {
   const gate = payload.gate;
   if (!isObject(gate) || !['critical', 'high', 'medium', 'low', 'info', 'any', 'none'].includes(gate.failOn) || ![0, 1, 2].includes(gate.exitCode) || !Array.isArray(gate.violations) || !Array.isArray(gate.unknown)) throw coded('invalid_artifact');
   for (const values of [gate.violations, gate.unknown]) if (values.some((id) => !ids.has(id)) || new Set(values).size !== values.length) throw coded('invalid_artifact');
+  const expectedGate = comparisonGate(gateEntries, payload.status, gate.failOn);
+  for (const field of ['violations', 'unknown']) {
+    const supplied = new Set(gate[field]);
+    if (supplied.size !== expectedGate[field].length || expectedGate[field].some((id) => !supplied.has(id))) throw coded('invalid_artifact');
+  }
+  if (gate.exitCode !== expectedGate.exitCode) throw coded('invalid_artifact');
   if ((payload.status === 'incomplete' && gate.exitCode !== 2) || (gate.exitCode === 0 && (payload.status !== 'complete' || gate.violations.length || gate.unknown.length)) || (gate.exitCode === 1 && (payload.status !== 'complete' || !gate.violations.length || gate.unknown.length)) || (gate.exitCode === 2 && !gate.unknown.length && payload.status === 'complete')) throw coded('invalid_artifact');
   state.comparisonEntries += payload.entries.length;
   return { baselineId: payload.baseline.id, currentId: payload.current.id, target: { path: payload.baseline.target.path }, status: payload.status, counts, gate: { failOn: gate.failOn, exitCode: gate.exitCode } };

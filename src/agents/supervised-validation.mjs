@@ -202,9 +202,9 @@ function sourceReader(command,expected){
   if(quote)return false;if(started)words.push(word);const tool=words.shift();if(!['cat','rg','sed','head','tail','wc','ls'].includes(tool))return false;
   const confined=p=>{if(!p||/[\x00-\x1f*?\[\]{}~]/.test(p))return false;const absolute=resolve(expected.context.runner??'/',p),rel=relative(expected.context.target,absolute);return rel===''||!rel.startsWith('..')&&!isAbsolute(rel)||expected.readFiles.includes(absolute);};
   const safeCount=value=>/^\d+$/.test(value??'')&&Number.isSafeInteger(Number(value));
+  if(tool==='sed')return words[0]==='-n'&&/^\d+(?:,\d+)?p$/.test(words[1]??'')&&words.length>2&&words.slice(2).every(p=>!p.startsWith('-')&&confined(p));
   const paths=[];let pattern=tool!=='rg',files=false;
   for(let i=0;i<words.length;i++){const w=words[i];if(w==='--'){if(tool==='rg'&&!pattern&&!files){if(++i>=words.length)return false;pattern=true;}paths.push(...words.slice(i+1));break;}
-    if(tool==='sed'){if(i!==0||w!=='-n'||!/^\d+(?:,\d+)?p$/.test(words[i+1]??''))return false;i++;paths.push(...words.slice(i+1));break;}
     if(w.startsWith('-')){if(tool==='rg'){if(w==='--files'){files=true;continue;}if(['-e','--regexp'].includes(w)){if(!words[++i])return false;pattern=true;continue;}if(['--glob','-g','--max-count','-m'].includes(w)){if(!words[++i])return false;continue;}if(!['-n','--line-number','-l','--files-with-matches','-i','-s','-F','--fixed-strings','--hidden','--no-ignore','--count','-c','-U','--multiline'].includes(w))return false;}
       else if(tool==='head'&&/^-\d+$/.test(w)){if(!safeCount(w.slice(1)))return false;}
       else if(['head','tail'].includes(tool)&&['-n','-c'].includes(w)){if(!safeCount(words[++i]))return false;}

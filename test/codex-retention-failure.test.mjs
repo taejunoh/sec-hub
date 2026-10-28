@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -13,7 +13,7 @@ async function invoke(spec, preload) {
   const options = JSON.parse(spec.args[1]);
   const child = spawn(spec.command, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, SEC_HUB_TEST_RESULTS_PATH: join(options.artifactDir, 'results-path.txt') },
+    env: { ...process.env, EXAMPLE_API_TOKEN: 'synthetic-private-copy-secret', SEC_HUB_TEST_RESULTS_PATH: join(options.artifactDir, 'results-path.txt') },
   });
   let stdout = '';
   let stderr = '';
@@ -28,9 +28,10 @@ async function invoke(spec, preload) {
 
 test('Codex wrapper retains private results after copy failure and cleans up after success', async t => {
   const root = await mkdtemp(join(tmpdir(), 'sec-codex-retention-test-'));
+  const canonicalTemp = await realpath(tmpdir());
   t.after(async () => {
     const resultsPath = await readFile(join(root, 'failed-copy', 'results-path.txt'), 'utf8').catch(() => '');
-    if (resultsPath.startsWith(join(tmpdir(), 'sec-hub-codex-'))) await rm(dirname(resultsPath), { recursive: true, force: true });
+    if (resultsPath.startsWith(join(canonicalTemp, 'sec-hub-codex-'))) await rm(dirname(resultsPath), { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   });
   const fake = join(root, 'fake-cs.mjs');
@@ -51,7 +52,7 @@ test('Codex wrapper retains private results after copy failure and cleans up aft
   await writeFile(preload, `
     import fs from 'node:fs/promises';
     import { syncBuiltinESMExports } from 'node:module';
-    fs.cp = async () => { throw Object.assign(new Error('synthetic copy failure'), { code: 'EIO' }); };
+    fs.cp = async () => { throw Object.assign(new Error('synthetic copy failure ' + process.env.EXAMPLE_API_TOKEN), { code: 'EIO' }); };
     syncBuiltinESMExports();
   `);
 
@@ -70,10 +71,12 @@ test('Codex wrapper retains private results after copy failure and cleans up aft
   const failedRun = await invoke(failed.spec, preload);
   assert.equal(failedRun.exitCode, 2);
   assert.match(failedRun.stderr, /private temporary results retained at (.+)\./);
-  assert.doesNotMatch(failedRun.stderr, /synthetic copy failure|EIO/);
+  assert.match(failedRun.stderr, /EIO.*synthetic copy failure/);
+  assert.doesNotMatch(failedRun.stderr, /synthetic-private-copy-secret/);
+  assert.ok(failedRun.stderr.length < 2500);
   const retainedPath = failedRun.stderr.match(/private temporary results retained at (.+)\./)[1];
   const resultsPath = await readFile(join(failed.artifactDir, 'results-path.txt'), 'utf8');
-  assert.ok(retainedPath.startsWith(join(tmpdir(), 'sec-hub-codex-')));
+  assert.ok(retainedPath.startsWith(join(canonicalTemp, 'sec-hub-codex-')));
   assert.equal(dirname(resultsPath), retainedPath);
   assert.equal((await stat(retainedPath)).mode & 0o777, 0o700);
   assert.equal(await readFile(join(resultsPath, 'partial-result.json'), 'utf8'), '{"retained":true}');

@@ -64,43 +64,54 @@ async function preloadAssets() {
   return assets;
 }
 
+// Fields handled structurally are excluded from the generic traversal. Explicit
+// field names remain stable even when an inherited secret matches a schema key.
+function redactFields(record, fields, redact) {
+  const names = new Set(fields);
+  const safe = redact(Object.fromEntries(Object.entries(record).filter(([key]) => !names.has(key))));
+  for (const field of fields) if (record[field] !== undefined) safe[field] = redact(record[field]);
+  return safe;
+}
+function redactTarget(target, redact) {
+  return redactFields(target, ['path', 'revision', 'dirty'], redact);
+}
 function redactFinding(finding, redact) {
-  const safe = redact(finding);
-  if (finding?.id !== undefined) safe.id = redact(finding.id);
-  if (finding?.toolId !== undefined) safe.toolId = redact(finding.toolId);
-  if (finding?.ruleId !== undefined) safe.ruleId = redact(finding.ruleId);
-  if (finding?.title !== undefined) safe.title = redact(finding.title);
-  if (finding?.description !== undefined) safe.description = redact(finding.description);
-  if (finding?.severity !== undefined) safe.severity = SEVERITIES.has(finding.severity) ? finding.severity : redact(finding.severity);
-  if (finding?.verification !== undefined) safe.verification = VERIFICATIONS.has(finding.verification) ? finding.verification : redact(finding.verification);
-  if (finding?.location !== undefined) {
-    if (finding.location && typeof finding.location === 'object' && !Array.isArray(finding.location)) safe.location = { ...redact(finding.location), ...(finding.location.path !== undefined ? { path: redact(finding.location.path) } : {}), ...(finding.location.package !== undefined ? { package: redact(finding.location.package) } : {}), ...(finding.location.version !== undefined ? { version: redact(finding.location.version) } : {}), ...(finding.location.url !== undefined ? { url: redact(finding.location.url) } : {}), ...(finding.location.line !== undefined ? { line: Number.isSafeInteger(finding.location.line) && finding.location.line > 0 ? finding.location.line : redact(finding.location.line) } : {}) };
-    else safe.location = redact(finding.location);
-  }
-  if (finding?.aliases !== undefined) safe.aliases = Array.isArray(finding.aliases) ? finding.aliases.map(redact) : redact(finding.aliases);
-  if (finding?.references !== undefined) safe.references = Array.isArray(finding.references) ? finding.references.map(redact) : redact(finding.references);
-  if (finding?.evidence !== undefined) safe.evidence = redact(finding.evidence);
-  if (finding?.rawRef !== undefined) safe.rawRef = redact(finding.rawRef);
-  if (Array.isArray(finding?.sources)) safe.sources = finding.sources.map(redact);
-  if (Array.isArray(finding?.sourceRecords)) safe.sourceRecords = finding.sourceRecords.map((item) => redactFinding(item, redact));
+  const { sourceRecords, location, severity, verification, ...rest } = finding;
+  const safe = redactFields(rest, ['id', 'toolId', 'ruleId', 'title', 'description', 'aliases', 'references', 'evidence', 'rawRef', 'sources'], redact);
+  if (severity !== undefined) safe.severity = SEVERITIES.has(severity) ? severity : redact(severity);
+  if (verification !== undefined) safe.verification = VERIFICATIONS.has(verification) ? verification : redact(verification);
+  if (location !== undefined) safe.location = location && typeof location === 'object' && !Array.isArray(location)
+    ? redactFields(location, ['path', 'package', 'version', 'url', 'line'], redact) : redact(location);
+  if (sourceRecords !== undefined) safe.sourceRecords = Array.isArray(sourceRecords) ? sourceRecords.map((item) => redactFinding(item, redact)) : redact(sourceRecords);
   return safe;
 }
 function redactRun(run, redact) {
-  const safe = redact(run);
-  safe.schemaVersion = run.schemaVersion;
-  safe.id = redact(run.id);
-  if (run.startedAt !== undefined) safe.startedAt = redact(run.startedAt);
-  if (run.endedAt !== undefined) safe.endedAt = redact(run.endedAt);
-  safe.status = RUN_STATUSES.has(run.status) ? run.status : redact(run.status);
-  if (run.target) safe.target = { ...redact(run.target), path: redact(run.target.path), ...(run.target.revision !== undefined ? { revision: redact(run.target.revision) } : {}), ...(run.target.dirty !== undefined ? { dirty: typeof run.target.dirty === 'boolean' ? run.target.dirty : redact(run.target.dirty) } : {}) };
-  if (Array.isArray(run.tools)) safe.tools = run.tools.map((tool) => ({ ...redact(tool), id: redact(tool.id), status: TOOL_STATUSES.has(tool.status) ? tool.status : redact(tool.status), ...(tool.selected !== undefined ? { selected: tool.selected } : {}), ...(Array.isArray(tool.findings) ? { findings: tool.findings.map((finding) => redactFinding(finding, redact)) } : {}), ...Object.fromEntries(['source', 'version', 'name', 'reason', 'execution', 'provenance'].filter((key) => tool[key] !== undefined).map((key) => [key, redact(tool[key])])) }));
-  if (Array.isArray(run.findings)) safe.findings = run.findings.map((finding) => redactFinding(finding, redact));
-  for (const key of ['provenance', 'verification', 'verificationPassed', 'pendingIntegrations']) if (run[key] !== undefined) safe[key] = redact(run[key]);
+  const { schemaVersion, status, target, tools, findings, ...rest } = run;
+  const safe = redactFields(rest, ['id', 'startedAt', 'endedAt', 'provenance', 'verification', 'verificationPassed', 'pendingIntegrations'], redact);
+  safe.schemaVersion = schemaVersion;
+  safe.status = RUN_STATUSES.has(status) ? status : redact(status);
+  if (target !== undefined) safe.target = target ? redactTarget(target, redact) : redact(target);
+  if (tools !== undefined) safe.tools = Array.isArray(tools) ? tools.map((tool) => {
+    const { status: toolStatus, selected, findings: toolFindings, ...metadata } = tool;
+    const item = redactFields(metadata, ['id', 'source', 'version', 'name', 'reason', 'execution', 'provenance'], redact);
+    item.status = TOOL_STATUSES.has(toolStatus) ? toolStatus : redact(toolStatus);
+    if (selected !== undefined) item.selected = selected;
+    if (toolFindings !== undefined) item.findings = Array.isArray(toolFindings) ? toolFindings.map((finding) => redactFinding(finding, redact)) : redact(toolFindings);
+    return item;
+  }) : redact(tools);
+  if (findings !== undefined) safe.findings = Array.isArray(findings) ? findings.map((finding) => redactFinding(finding, redact)) : redact(findings);
   return safe;
 }
 function redactComparison(comparison, redact, generated = false) {
-  const side = (item) => ({ ...redact(item), id: redact(item.id), target: { path: redact(item.target.path), ...(item.target.revision !== undefined ? { revision: redact(item.target.revision) } : {}), ...(item.target.dirty !== undefined ? { dirty: typeof item.target.dirty === 'boolean' ? item.target.dirty : redact(item.target.dirty) } : {}) }, status: RUN_STATUSES.has(item.status) ? item.status : redact(item.status), ...(item.provenance !== undefined ? { provenance: redact(item.provenance) } : {}) });
-  const coverageSide = (item) => item === null ? null : ({ ...redact(item), status: TOOL_STATUSES.has(item.status) ? item.status : redact(item.status), ...(item.selected !== undefined ? { selected: item.selected } : {}) });
+  const side = (item) => {
+    const { target, status, ...metadata } = item;
+    return { ...redactFields(metadata, ['id', 'provenance'], redact), target: { path: redact(target.path), ...(target.revision !== undefined ? { revision: redact(target.revision) } : {}), ...(target.dirty !== undefined ? { dirty: redact(target.dirty) } : {}) }, status: RUN_STATUSES.has(status) ? status : redact(status) };
+  };
+  const coverageSide = (item) => {
+    if (item === null) return null;
+    const { status, selected, ...metadata } = item;
+    return { ...redact(metadata), status: TOOL_STATUSES.has(status) ? status : redact(status), ...(selected !== undefined ? { selected } : {}) };
+  };
   return {
     schemaVersion: comparison.schemaVersion,
     kind: comparison.kind,

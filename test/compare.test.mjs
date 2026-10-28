@@ -11,8 +11,8 @@ test('occurrences, escalation, decrease and candidate provenance',()=>{
 test('leaf lineage preserves separate lockfiles and rejects top-level tampering',()=>{
  const leaves=[finding(),finding({location:{path:'b.lock',package:'npm:a',version:'1'}})];const grouped=normalizeFindings(leaves); const r=run(grouped);assert.equal(compareRuns(r,run([])).counts.resolved,2);assert.throws(()=>compareRuns({...r,findings:[]},r),/findings|multiset/i);
 });
-test('coverage is local while global failure remains indeterminate',()=>{
- const b=run([finding()]);const c=run([],{status:'partial',tools:[{id:'osv',status:'completed',selected:true,findings:[]},{id:'skillspector',selected:true,status:'failed',findings:[]}]});const out=compareRuns(b,c);assert.equal(out.counts.resolved,1);assert.equal(out.status,'incomplete');assert.equal(out.gate.exitCode,2);
+test('global failure prevents resolution despite complete local tool coverage',()=>{
+ const b=run([finding()]);const c=run([],{status:'partial',tools:[{id:'osv',status:'completed',selected:true,findings:[]},{id:'skillspector',selected:true,status:'failed',findings:[]}]});const out=compareRuns(b,c);assert.equal(out.counts.resolved,0);assert.equal(out.counts.unobserved,1);assert.ok(out.entries[0].reasons.includes('current:run-partial'));assert.equal(out.status,'incomplete');assert.equal(out.gate.exitCode,2);assert.equal(compareRuns(b,run()).counts.resolved,1);
  for(const status of ['skipped','failed','timed_out','cancelled','imported'])assert.equal(compareRuns(b,run([],{tools:[{id:'osv',selected:true,status,findings:[]}]})).counts.unobserved,1);
  assert.equal(compareRuns(b,run([],{tools:[]})).status,'incomplete');
 });

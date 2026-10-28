@@ -1,8 +1,8 @@
 # Sec Hub
 
-> 현재 저장소 checkout에서 Open Code Review 0.2.1 재검사의 고위험 #38(가림 실패 후 원문 잔존)·#41(POSIX 경로 검증 우회)을 수정했습니다. 새 회귀 테스트 13개를 포함해 Node 24 전체 테스트 **328/328 통과**, 명세·독립 품질 검토도 통과했습니다. 수정 커밋은 `ea621e801910198e4498f8876e4192fc68d4f619`입니다. [두 고위험 수정 보고서](verification/high2-remediation/REPORT.md)와 [전체 테스트 로그](verification/high2-remediation/evidence/full-suite-node24.log)를 확인하세요.
+> 0.2.2는 Open Code Review 0.2.1 재검사의 고위험 #9·#12와 중간 심각도 19건을 수정한 안정화 버전입니다. 중간 후보 #13은 기존 pinned 공식 검증기가 이미 차단해 반증됐습니다. 새 테스트 57개를 포함해 Node 24 전체 **385/385 통과**, 명세·독립 품질 검토도 통과했습니다. [0.2.2 패키지](releases/sec-hub-local-0.2.2.tgz), [22건 판정·수정·실행 검증 보고서](verification/release-0.2.2/REPORT.md), [전체 테스트 로그](verification/release-0.2.2/evidence/full-suite-node24.log)를 확인하세요.
 
-기존 0.2.1 배포 파일은 수정 전 검사 대상으로 보존했습니다. 위 두 수정은 저장소 checkout에 반영됐으며 기존 tarball에 들어 있지 않습니다. 해당 배포 파일의 실제 Open Code Review는 지원 대상 35/35개 완료(Markdown 2개 제외), 후보 44개(반복 권고 6·새 후보 38)를 기록했습니다. [수정 전 재검사·기존 13건 대조](verification/ocr-0.2.1-assessment/REPORT.md)와 원본 결과는 그대로 남깁니다. 이번 두 수정 뒤에는 native 재검사를 실행하지 않았으며 나머지 후보를 해결했다고 주장하지 않습니다. 7개 도구 통합은 기존 cohort의 6/7이고 Anthropic은 계속 보류합니다. [7개 도구 상태](verification/SEVEN-TOOL-STATUS.md), [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md).
+이번 패키지는 이전 checkout에서 수정했던 고위험 #38(가림 실패 후 원문 잔존)·#41(POSIX 경로 검증 우회)도 포함합니다. 기존 0.2.1 배포 파일과 44개 native 후보의 [원본 재검사 기록](verification/ocr-0.2.1-assessment/REPORT.md), [이전 두 수정 기록](verification/high2-remediation/REPORT.md)은 그대로 보존합니다. 이번 버전 뒤 새 native 검사는 실행하지 않았습니다. Windows 하위 프로세스 종료 #31과 동시 ancestor 교체 경합 #40은 별도 조건부 후보로 남고, 낮은 심각도 권고는 이번 수정 범위 밖입니다. 7개 도구 통합은 기존 cohort의 6/7이며 Anthropic은 계속 보류합니다. [7개 도구 상태](verification/SEVEN-TOOL-STATUS.md), [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md).
 
 기존 Cloudflare 실행은 정적 source-only quick coverage로, 두 개의 미확정 후보와 unknown 심각도를 기록했습니다. SARIF 스키마·인증정보 패턴 검사와 HTML·증거 링크 QA를 완료했습니다. 이는 7개 검증 완료나 동적 악용 확인을 뜻하지 않습니다. 활성화된 1회 후속 작업은 2026년 10월 29일 오전 6:10(뉴욕 시간)에 Anthropic native canary, 정적 검사, 최종 집계만 수행합니다.
 
@@ -20,7 +20,7 @@ node bin/sec-hub.mjs --help
 
 `npm install`은 런타임 의존성을 추가하지 않습니다. 전역 명령이 필요하면 선택적으로 `npm link`를 실행할 수 있습니다. 기본 사용은 `node bin/sec-hub.mjs`입니다.
 
-npm 패키지에는 CLI, 런타임, 예시와 README만 포함됩니다. 유지 관리 스크립트는 저장소 checkout에서만 사용할 수 있으며 설치 패키지에는 포함되지 않습니다. 실행 증거는 저장소의 `verification/`에 남습니다. 0.2.1은 검토용 빌드이며 tarball 생성이 7개 도구 검증 완료를 뜻하지는 않습니다.
+npm 패키지에는 CLI, 런타임, 예시와 README만 포함됩니다. 유지 관리 스크립트는 저장소 checkout에서만 사용할 수 있으며 설치 패키지에는 포함되지 않습니다. 실행 증거는 저장소의 `verification/`에 남습니다. 0.2.2의 패키징·로컬 실행 검증은 새 native 검사나 7개 도구 통합 완료를 뜻하지 않습니다.
 
 ## 명령
 

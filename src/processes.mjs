@@ -8,14 +8,14 @@ export function runProcess(spec, options={}) {
   if(!Number.isFinite(timeoutMs)||timeoutMs<=0||!Number.isSafeInteger(maxOutputBytes)||maxOutputBytes<1)return Promise.reject(new Error('Positive timeout and output limit are required'));
   return new Promise(resolveResult=>{
     const started=Date.now();
-    let child,timer,escalation,hardDeadline,bytes=0,state,reason,settled=false,closed=false,stopping=false,escalated=false,exitCode=null;
+    let child,timer,escalation,hardDeadline,bytes=0,outputLimitExceeded=false,state,reason,settled=false,closed=false,stopping=false,escalated=false,exitCode=null;
     const stdout=[],stderr=[];
     const settle=()=>{
       if(settled)return;
       settled=true;clearTimeout(timer);clearTimeout(escalation);clearTimeout(hardDeadline);
       signal?.removeEventListener('abort',cancel);
       const allowed=[...(spec.successCodes??[0]),...(spec.findingCodes??[])];
-      resolveResult({status:state??(allowed.includes(exitCode)?'completed':'failed'),stdout:redact(Buffer.concat(stdout).toString('utf8')),stderr:redact(Buffer.concat(stderr).toString('utf8')),exitCode,reason:reason??(!allowed.includes(exitCode)?`Process exited with ${exitCode===null?'a signal':`code ${exitCode}`}`:undefined),durationMs:Date.now()-started});
+      resolveResult({status:state??(allowed.includes(exitCode)?'completed':'failed'),stdout:outputLimitExceeded?'':redact(Buffer.concat(stdout).toString('utf8')),stderr:outputLimitExceeded?'':redact(Buffer.concat(stderr).toString('utf8')),exitCode,reason:reason??(!allowed.includes(exitCode)?`Process exited with ${exitCode===null?'a signal':`code ${exitCode}`}`:undefined),durationMs:Date.now()-started});
     };
     const finishWhenClean=()=>{if(closed&&(!stopping||escalated))settle();};
     const kill=kind=>{
@@ -38,7 +38,12 @@ export function runProcess(spec, options={}) {
     const capture=destination=>chunk=>{
       const remaining=Math.max(0,maxOutputBytes-bytes);
       if(remaining)destination.push(chunk.subarray(0,remaining));bytes+=chunk.length;
-      if(bytes>maxOutputBytes)stop('failed',`Output exceeds ${maxOutputBytes} byte limit`);
+      if(bytes>maxOutputBytes){
+        // A byte cap can split a known secret before redaction can recognize it.
+        // Omit both captured streams on overflow; keep the bounded status/reason.
+        outputLimitExceeded=true;stdout.length=0;stderr.length=0;
+        stop('failed',`Output exceeds ${maxOutputBytes} byte limit; captured output omitted`);
+      }
     };
     child.stdout.on('data',capture(stdout));child.stderr.on('data',capture(stderr));
     child.once('error',error=>{state='failed';reason=`Cannot start executable (${error.code??'spawn error'})`;if(!stopping)settle();});

@@ -4,7 +4,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { StringDecoder } from 'node:string_decoder';
 import { mkdir, mkdtemp, writeFile, open, rm, readdir } from 'node:fs/promises';
-import { join, resolve, relative, isAbsolute } from 'node:path';
+import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { ensureSafeDirectory, atomicWriteFile } from '../safe-io.mjs';
 import { validateAgentOptions } from '../config.mjs';
 import { nativeOptions, PINS, SOURCES, OUTPUTS, safeRead, sha256, sourceManifest, copySources, sameInputs, verifySourcePin, runOfficialValidators } from './validation.mjs';
@@ -12,7 +12,7 @@ import { loadCloudflareContracts, buildRolePrompt, supervisedArgs, reconOutputSc
 import { validateRecon, preparePlan, assignHunter, applyHunter, applyCritic, applyVerifier, inspectRoleEvidence, assertObservedPolicy, renderSupervisedReports, officialHelpers, validateRecords } from './supervised-validation.mjs';
 import {inspectCloudflarePreparation,materializeCloudflarePreparation} from './cloudflare-preparation.mjs';
 const execute=promisify(execFile),json=x=>JSON.stringify(x,null,2)+'\n';
-const inside=(parent,child)=>{const p=relative(resolve(parent),resolve(child));return p===''||!p.startsWith('..')&&!isAbsolute(p);};
+const inside=(parent,child)=>{const p=relative(resolve(parent),resolve(child));return p!=='..'&&!p.startsWith('..'+sep)&&!isAbsolute(p);};
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function groupAlive(pid){try{process.kill(-pid,0);return true;}catch(e){return e.code!=='ESRCH';}}
 async function terminateGroup(pid){
@@ -53,11 +53,13 @@ export async function runSupervisedCloudflare(payload){
   if(inside(payload.target,options.workRoot)||inside(payload.artifactDir,options.workRoot)||inside(payload.target,payload.artifactDir)||inside(options.workRoot,payload.artifactDir))throw new Error('Supervised work/output paths must be isolated outside target');
   await ensureSafeDirectory(payload.artifactDir);await ensureSafeDirectory(options.workRoot);
   if(prepared&&(await readdir(payload.artifactDir)).length)throw new Error('Preparation continuation requires a fresh empty raw output directory');
-  const stage=await mkdtemp(join(options.workRoot,'sec-hub-supervised-')),copy=join(stage,'target'),runner=join(stage,'runner');await mkdir(runner,{mode:0o700});await copySources(payload.target,copy,inputs);
+  const stage=await mkdtemp(join(options.workRoot,'sec-hub-supervised-')),copy=join(stage,'target'),runner=join(stage,'runner'),active=new Set();
+  try{
+  await mkdir(runner,{mode:0o700});await copySources(payload.target,copy,inputs);
   const manifest={schema:'sec-hub.native-agent/v1',promptVersion:CLOUDFLARE_PROMPT_VERSION,id:'cloudflare',strategy:STRATEGY,label:LABEL,adapted:true,source:SOURCES.cloudflare,sourceCommit:PINS.cloudflare,instructions,nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,backend:'codex',model:options.model,mode:'supervised-official-security-audit-skill',target:resolve(payload.target),copyTarget:copy,runner,inputs,copyBefore:await sourceManifest(copy),startedAt:new Date().toISOString(),status:'incomplete',reasons:[],invocation:{command:payload.command,args:payload.args},roles:[],retainedFiles:[...OUTPUTS.cloudflare],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
   const metadata={run_id:`supervised-${Date.now()}-${process.pid}`,repo:resolve(payload.target),target:copy,source_ref:`sha256:${sha256(JSON.stringify(inputs))}`,profile:'quick',scope_paths:inputs.map(i=>i.path),budget:{max_agents:options.maxAgents,spent:0,planned_minimum:8},execution_policy:'sandboxed-source-and-local-only',selected_companion_files:[],prior_run_paths:[],shared_file_owners:Object.fromEntries(OUTPUTS.cloudflare.map(f=>[f,'trusted-supervisor'])),run_status:'in_progress',strategy:STRATEGY};
   if(prepared){manifest.preparation=prepared.receipt;manifest.retainedFiles.push(...prepared.retainedFiles);metadata.preparation={source_manifest:prepared.receipt.sourceManifestPath,source_manifest_sha256:prepared.receipt.sourceManifestSha256,source_status:prepared.receipt.sourceStatus,charged_agents:charged};if(!sameInputs(manifest.copyBefore,prepared.source.inputs))throw new Error('Continuation source copy differs from preparation inputs');}
-  const active=new Set(),knownThreads=new Set(prepared?.threadIds??[]),signalState={code:0},deadline=Date.now()+SUPERVISED_WALL_TIMEOUT_MS,handlers=[];let state=prepared?.state??null,cleaned=false;
+  const knownThreads=new Set(prepared?.threadIds??[]),signalState={code:0},deadline=Date.now()+SUPERVISED_WALL_TIMEOUT_MS,handlers=[];let state=prepared?.state??null;
   const stop=code=>{signalState.code=code;const owned=[...active];for(const pid of owned)try{process.kill(-pid,'SIGTERM');}catch{}
     // Outer runProcess escalates at300ms. Kill detached child groups first,
     // retaining this timer even if a leader exits before its descendants.
@@ -143,22 +145,31 @@ export async function runSupervisedCloudflare(payload){
   }catch(error){manifest.reasons.push(error.message);metadata.run_status='incomplete';metadata.incomplete_reason=[...new Set(manifest.reasons)].join('; ');}
   finally{
     clearTimeout(wholeTimer);
-    const cleanup=await Promise.allSettled([...active].map(async pid=>{await terminateGroup(pid);active.delete(pid);}));if(cleanup.some(r=>r.status==='rejected')){manifest.status='incomplete';manifest.reasons.push('Native process group cleanup failed');metadata.run_status='incomplete';metadata.incomplete_reason='Native process group cleanup failed';}else cleaned=active.size===0;
+    const cleanup=await Promise.allSettled([...active].map(async pid=>{await terminateGroup(pid);active.delete(pid);}));if(cleanup.some(r=>r.status==='rejected')){manifest.status='incomplete';manifest.reasons.push('Native process group cleanup failed');metadata.run_status='incomplete';metadata.incomplete_reason='Native process group cleanup failed';}
     for(const [signal,handler]of handlers)process.removeListener(signal,handler);
     try{
       manifest.copyAfter=await sourceManifest(copy);manifest.originalAfter=await sourceManifest(payload.target);
       const after=await verifySourcePin('cloudflare',options);if(!sameInputs(inputs,manifest.copyAfter)||!sameInputs(inputs,manifest.originalAfter)||!sameInputs(instructions,after))throw new Error('Source preservation or pinned instruction verification failed');
     }catch(e){manifest.status='incomplete';manifest.reasons.push(e.message);metadata.run_status='incomplete';metadata.incomplete_reason=e.message;}
     if(manifest.status!=='complete'){metadata.run_status='incomplete';metadata.incomplete_reason=[...new Set(manifest.reasons)].join('; ');}
-    try{
+    {
       try{await save();}catch(error){manifest.status='incomplete';manifest.reasons.push(`Final supervisor save failed: ${error.message}`);metadata.run_status='incomplete';metadata.incomplete_reason=[...new Set(manifest.reasons)].join('; ');}
       delete manifest.nativeEnvironment;manifest.endedAt=new Date().toISOString();
-      for(const file of manifest.retainedFiles)try{manifest.preRedactionHashes[file]=sha256(await safeRead(join(payload.artifactDir,file)));}catch{manifest.status='incomplete';manifest.reasons.push(`Missing retained role evidence ${file}`);}
+      let retainedReadFailure=false;
+      for(const file of manifest.retainedFiles)try{manifest.preRedactionHashes[file]=sha256(await safeRead(join(payload.artifactDir,file)));}catch{retainedReadFailure=true;manifest.status='incomplete';manifest.reasons.push(`Missing retained role evidence ${file}`);}
+      if(retainedReadFailure){
+        metadata.run_status='incomplete';metadata.incomplete_reason=[...new Set(manifest.reasons)].join('; ');
+        try{await save();}catch(error){manifest.reasons.push(`Final supervisor save failed: ${error.message}`);}
+        // Canonical reports changed after an evidence failure: seal their final bytes.
+        for(const file of OUTPUTS.cloudflare)try{manifest.preRedactionHashes[file]=sha256(await safeRead(join(payload.artifactDir,file)));}catch{delete manifest.preRedactionHashes[file];}
+      }
       await atomicWriteFile(join(payload.artifactDir,'execution-manifest.json'),json(manifest));
-    }finally{
-      // Publication failures cannot skip cleanup of confirmed-dead groups.
-      if(cleaned)await rm(stage,{recursive:true,force:true});
     }
   }
   return manifest.status==='complete'?0:signalState.code||1;
+  }finally{
+    // No source copy survives initialization failure; uncertain process groups
+    // retain their stage until termination can be established.
+    if(active.size===0)await rm(stage,{recursive:true,force:true});
+  }
 }

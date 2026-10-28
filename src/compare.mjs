@@ -101,6 +101,18 @@ function conflicts(a,b){
   for(const [label,av,bv] of [['source',a.source,b.source],['source',a.execution?.source,b.execution?.source],['mode',a.execution?.mode??a.execution?.executionMode,b.execution?.mode??b.execution?.executionMode],['pin',a.execution?.sourceCommit??a.execution?.revision,b.execution?.sourceCommit??b.execution?.revision]])if(av!==bv&&(av!==undefined||bv!==undefined))result.push(`incompatible-${label}`);
   return result;
 }
+/** Evaluate the v1 comparison gate from its canonical entry categories/severities. */
+export function comparisonGate(entries,status,failOn='high'){
+  if(!['critical','high','medium','low','info','any','none'].includes(failOn))throw new TypeError('Invalid failOn');
+  const violations=[],unknown=[];
+  for(const e of entries){
+    if(!['new','regressed'].includes(e.category)||failOn==='none')continue;
+    const severity=e.after.severity;
+    if(failOn==='any'||(severity!=='unknown'&&rank[severity]>=rank[failOn]))violations.push(e.id);
+    else if(severity==='unknown')unknown.push(e.id);
+  }
+  return {failOn,violations,unknown,exitCode:status==='incomplete'||unknown.length?2:violations.length?1:0};
+}
 /** Compare saved v1 claims using exact, versioned identities. New means newly observed,
  * not proven introduced. Advisory alias/version changes and fallback line shifts can
  * produce new and disappeared entries. No native claim is authenticated here. */
@@ -115,11 +127,17 @@ export function compareRuns(baseRun,currentRun,{failOn='high'}={}){
   const coverage=[...ids].sort(order).map(toolId=>{const a=base.tools.get(toolId),b=current.tools.get(toolId);return {toolId,baseline:coverageSide(a),current:coverageSide(b),reasons:[...new Set([...limitations(a).map(r=>`baseline:${r}`),...limitations(b).map(r=>`current:${r}`),...conflicts(a,b)])].sort(order)};});
   const notices=[];
   for(const c of coverage){const a=base.tools.get(c.toolId),b=current.tools.get(c.toolId);if(a?.version!==b?.version&&a?.version&&b?.version)notices.push(`${c.toolId}: scanner versions differ`);if(a?.execution?.backendVersion!==b?.execution?.backendVersion&&a?.execution?.backendVersion&&b?.execution?.backendVersion)notices.push(`${c.toolId}: backend versions differ`);}
-  const globalIncomplete=[baseRun,currentRun].some(r=>r.status!=='completed'||r.verificationPassed===false||r.verification?.passed===false||(Array.isArray(r.pendingIntegrations)&&r.pendingIntegrations.length));
+  const globalReasons=[];
+  for(const [side,run] of [['baseline',baseRun],['current',currentRun]]){
+    if(run.status!=='completed')globalReasons.push(`${side}:run-${run.status}`);
+    if(run.verificationPassed===false||run.verification?.passed===false)globalReasons.push(`${side}:run-verification-failed`);
+    if(Array.isArray(run.pendingIntegrations)&&run.pendingIntegrations.length)globalReasons.push(`${side}:run-pending-integrations`);
+  }
+  const globalIncomplete=globalReasons.length>0;
   const groups=new Map();
   for(const [side,data] of [['before',base],['after',current]])for(const f of data.findings){const i=identity(f,data.target);if(!groups.has(i.identity))groups.set(i.identity,{before:[],after:[]});groups.get(i.identity)[side].push(i);}
   const entries=[];
-  function add(category,before,after){const i=after??before;const reasons=[];if(i.weak)reasons.push('weak-identity');if(category==='new'){reasons.push('newly-observed');reasons.push(...(coverage.find(c=>c.toolId===i.finding.toolId)?.reasons.filter(r=>r.startsWith('baseline:'))??[]));}if(category==='unobserved')reasons.push(...(coverage.find(c=>c.toolId===i.finding.toolId)?.reasons??[]));if(category==='regressed')reasons.push(before.finding.severity==='unknown'||after.finding.severity==='unknown'?'severity-knownness-changed':'severity-increased');entries.push({identity:i.identity,identityMethod:i.identityMethod,category,...(before?{before:before.finding}:{}),...(after?{after:after.finding}:{}),reasons:[...new Set(reasons)].sort(order)});}
+  function add(category,before,after){const i=after??before;const reasons=[];if(i.weak)reasons.push('weak-identity');if(category==='new'){reasons.push('newly-observed');reasons.push(...(coverage.find(c=>c.toolId===i.finding.toolId)?.reasons.filter(r=>r.startsWith('baseline:'))??[]));}if(category==='unobserved')reasons.push(...globalReasons,...(coverage.find(c=>c.toolId===i.finding.toolId)?.reasons??[]));if(category==='regressed')reasons.push(before.finding.severity==='unknown'||after.finding.severity==='unknown'?'severity-knownness-changed':'severity-increased');entries.push({identity:i.identity,identityMethod:i.identityMethod,category,...(before?{before:before.finding}:{}),...(after?{after:after.finding}:{}),reasons:[...new Set(reasons)].sort(order)});}
   for(const {before,after} of groups.values()){
     before.sort((a,b)=>order(a.content,b.content));after.sort((a,b)=>order(a.content,b.content));
     const usedBefore=new Set(),usedAfter=new Set();
@@ -144,14 +162,12 @@ export function compareRuns(baseRun,currentRun,{failOn='high'}={}){
     remainingBefore.sort(bySeverity);remainingAfter.sort(bySeverity);
     const matched=Math.min(remainingBefore.length,remainingAfter.length);
     for(let i=0;i<matched;i++)match(remainingBefore[i],remainingAfter[i]);
-    for(let i=matched;i<remainingBefore.length;i++){const b=remainingBefore[i];add(!b.weak&&coverage.find(c=>c.toolId===b.finding.toolId)?.reasons.length===0?'resolved':'unobserved',b);}
+    for(let i=matched;i<remainingBefore.length;i++){const b=remainingBefore[i];add(!globalIncomplete&&!b.weak&&coverage.find(c=>c.toolId===b.finding.toolId)?.reasons.length===0?'resolved':'unobserved',b);}
     for(let i=matched;i<remainingAfter.length;i++)add('new',undefined,remainingAfter[i]);
   }
   entries.sort((a,b)=>order(a.identity,b.identity)||order(a.category,b.category)||order(key(a),key(b)));
   const ordinals=new Map();for(const e of entries){const ordinal=(ordinals.get(e.identity)??0)+1;ordinals.set(e.identity,ordinal);e.id=`cmp-v1-${e.identity}-${ordinal}`;}
   const counts={new:0,regressed:0,existing:0,resolved:0,unobserved:0};for(const e of entries)counts[e.category]++;
-  const violations=[],unknown=[];
-  for(const e of entries.filter(e=>['new','regressed'].includes(e.category))){const severity=e.after.severity;if(failOn==='none')continue;if(failOn==='any'||(severity!=='unknown'&&rank[severity]>=rank[failOn]))violations.push(e.id);else if(severity==='unknown')unknown.push(e.id);}
   const status=globalIncomplete||coverage.some(c=>c.reasons.length)||entries.some(e=>e.category==='unobserved')?'incomplete':'complete';
-  return {schemaVersion:1,kind:'sec-hub.comparison',identityVersion:1,baseline:{id:baseRun.id,target:canonical(baseRun.target),status:baseRun.status,...(baseRun.provenance!==undefined?{provenance:canonical(baseRun.provenance)}:{})},current:{id:currentRun.id,target:canonical(currentRun.target),status:currentRun.status,...(currentRun.provenance!==undefined?{provenance:canonical(currentRun.provenance)}:{})},status,coverage,entries,counts,notices:notices.sort(order),gate:{failOn,violations,unknown,exitCode:status==='incomplete'||unknown.length?2:violations.length?1:0}};
+  return {schemaVersion:1,kind:'sec-hub.comparison',identityVersion:1,baseline:{id:baseRun.id,target:canonical(baseRun.target),status:baseRun.status,...(baseRun.provenance!==undefined?{provenance:canonical(baseRun.provenance)}:{})},current:{id:currentRun.id,target:canonical(currentRun.target),status:currentRun.status,...(currentRun.provenance!==undefined?{provenance:canonical(currentRun.provenance)}:{})},status,coverage,entries,counts,notices:notices.sort(order),gate:comparisonGate(entries,status,failOn)};
 }

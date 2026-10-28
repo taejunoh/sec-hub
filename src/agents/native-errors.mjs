@@ -146,5 +146,5 @@ export function inspectTerminalOutcome(toolId, events, exitCode) {
   const retryAt = parseRetryAt(data.resets);
   const classified = categoryFor(data.strings);
   if (classified) return outcome(classified, { statusCode, retryAt });
-  return outcome('backend_error', { statusCode, retryAt });
+  return outcome(statusCode === 429 ? 'rate_limit' : 'backend_error', { statusCode, retryAt });
 }

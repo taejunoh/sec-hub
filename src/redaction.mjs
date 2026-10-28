@@ -12,7 +12,17 @@ export function redactValue(value,env=process.env) {
   const visit=item=>{
     if(typeof item==='string')return redact(item);
     if(Array.isArray(item))return item.map(visit);
-    if(item&&typeof item==='object')return Object.fromEntries(Object.entries(item).map(([key,entry])=>[redact(key),visit(entry)]));
+    if(item&&typeof item==='object'){
+      const entries=Object.entries(item).map(([key,entry])=>[redact(key),visit(entry)]);
+      // Reserve every original redacted spelling before allocating suffixes, so
+      // an existing '[REDACTED]#2' key is preserved rather than overwritten.
+      const reserved=new Set(entries.map(([key])=>key)),used=new Set();
+      return Object.fromEntries(entries.map(([key,entry])=>{
+        let unique=key,index=2;
+        while(used.has(unique)||unique!==key&&reserved.has(unique))unique=`${key}#${index++}`;
+        used.add(unique);return [unique,entry];
+      }));
+    }
     return item;
   };
   return visit(value);
