@@ -1,6 +1,6 @@
 # Sec Hub
 
-> 0.2.3에는 Windows 하위 프로세스 종료 경계 #31, trusted ancestor 경계 #40, Darwin ACL reader native helper가 포함됩니다. Anthropic workflow는 보류합니다. [0.2.3 릴리스 보고서](verification/release-0.2.3/REPORT.md).
+> 0.2.3은 Windows 하위 프로세스 종료 경계 #31, trusted ancestor 경계 #40, Darwin ACL reader native helper를 포함합니다. 배포 tarball은 빈 private npm 프로젝트에 오프라인 설치해 확인했습니다. 설치된 CLI를 통제된 fixture에서 OSV Scanner, 정적 SkillSpector, PHP2Shell checker로 실행해 총 10개 finding을 기록했고, 대상 파일은 바뀌지 않았습니다. 기존 read-only dashboard도 기능별로 확인했습니다. Anthropic workflow는 보류하며, 이 검증은 Sec Hub 자체나 7개 도구 전체의 보안 재감사가 아닙니다. [0.2.3 패키지·검증 보고서](verification/release-0.2.3/REPORT.md).
 
 > 0.2.2는 Open Code Review 0.2.1 재검사의 고위험 #9·#12와 중간 심각도 19건을 수정한 안정화 버전입니다. 중간 후보 #13은 기존 pinned 공식 검증기가 이미 차단해 반증됐습니다. 새 테스트 57개를 포함해 Node 24 전체 **385/385 통과**, 명세·독립 품질 검토도 통과했습니다. [0.2.2 패키지](releases/sec-hub-local-0.2.2.tgz), [22건 판정·수정·실행 검증 보고서](verification/release-0.2.2/REPORT.md), [전체 테스트 로그](verification/release-0.2.2/evidence/full-suite-node24.log)를 확인하세요.
 
