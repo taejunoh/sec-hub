@@ -1,12 +1,12 @@
 import { lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises';
-import { basename, dirname, join, parse, resolve } from 'node:path';
+import { basename, dirname, join, parse, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 /** Reject task-controlled directory links. macOS's fixed system aliases are allowed. */
 async function walkDirectory(directory,create=false,mode=0o700) {
   const absolute=resolve(directory),root=parse(absolute).root;
   let current=root;
-  for(const component of absolute.slice(root.length).split(/[\\/]/).filter(Boolean)){
+  for(const component of absolute.slice(root.length).split(sep).filter(Boolean)){
     current=join(current,component);
     let entry;
     try{entry=await lstat(current);}catch(error){

@@ -1,4 +1,4 @@
-import { readdir, realpath, stat, readFile, lstat } from 'node:fs/promises';
+import { readdir, realpath, stat, readFile, lstat, rm } from 'node:fs/promises';
 import { resolve, join, dirname, relative, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { runProcess } from './processes.mjs';
@@ -116,7 +116,9 @@ export async function runScan(options) {
       Object.assign(record,{status:result.status,exitCode:result.exitCode,durationMs:result.durationMs,endedAt:new Date().toISOString()});
       if(result.reason)record.reason=redact(result.reason);
       record.artifacts={stdout:join(artifactDir,'stdout.txt'),stderr:join(artifactDir,'stderr.txt')};
-      await Promise.all([atomicWriteFile(record.artifacts.stdout,redact(result.stdout),{mode:0o600}),atomicWriteFile(record.artifacts.stderr,redact(result.stderr),{mode:0o600})]);
+      const writes=await Promise.allSettled([atomicWriteFile(record.artifacts.stdout,redact(result.stdout),{mode:0o600}),atomicWriteFile(record.artifacts.stderr,redact(result.stderr),{mode:0o600})]);
+      const failedWrite=writes.find(write=>write.status==='rejected');
+      if(failedWrite)throw failedWrite.reason;
       if(result.status==='completed'){
         executionContext={...ctx,stdout:result.stdout,stderr:result.stderr,exitCode:result.exitCode};
         const findings=await adapter.parse(executionContext);
@@ -134,9 +136,22 @@ export async function runScan(options) {
         }catch{record.reason+='; incomplete native findings failed validation';}
       }
     }finally{
+      let artifactsSanitized=false;
+      try{await sanitizeArtifacts(artifactDir,redact);artifactsSanitized=true;}
+      catch{
+        record.status='failed';record.reason='Artifact sanitization failed; affected tool artifacts and findings were discarded.';
+        const discarded=new Set(record.findings);
+        run.findings=run.findings.filter(finding=>!discarded.has(finding));
+        record.findings=[];delete record.artifacts;delete record.execution;
+        try{
+          await assertSafeDirectory(dirname(artifactDir));
+          await rm(artifactDir,{recursive:true,force:true});
+          try{await lstat(artifactDir);throw new Error('Artifact directory remains');}
+          catch(error){if(error.code!=='ENOENT')throw error;}
+        }catch{throw new Error('Artifact sanitization failed and cleanup could not be confirmed; scan results were not published.');}
+      }
       try{
-        await sanitizeArtifacts(artifactDir,redact);
-        if(record.status==='completed'&&executionContext&&adapter.executionMetadata){
+        if(artifactsSanitized&&record.status==='completed'&&executionContext&&adapter.executionMetadata){
           const execution=await adapter.executionMetadata(executionContext);
           if(!execution||typeof execution!=='object'||Array.isArray(execution))throw new Error('Execution metadata must be a validated object');
           record.execution=sanitize(execution);
