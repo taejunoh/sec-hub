@@ -41,8 +41,6 @@ jobs:
         node: ['22', '24']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
-    env:
-      CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,16 +50,20 @@ jobs:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
       - name: Full supported POSIX suite
+        env:
+          CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
         run: node scripts/ci.mjs full
       - name: Fresh current-source candidate package smoke
         if: ${{ !cancelled() }}
+        env:
+          CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
         run: node scripts/package-smoke.mjs
       - name: Preserve source-bound CI evidence and ephemeral candidate
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-candidate-${{ github.sha }}-${{ matrix.os }}-node${{ matrix.node }}
-          path: ${{ env.CI_ARTIFACT_DIR }}
+          path: ${{ runner.temp }}/sec-hub-ci-evidence
           if-no-files-found: error
           retention-days: 7
 
@@ -73,8 +75,6 @@ jobs:
         node: ['22', '24']
     runs-on: windows-latest
     timeout-minutes: 10
-    env:
-      CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,12 +84,14 @@ jobs:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
       - name: Portable units, native process trees and Windows fail-closed file I/O
+        env:
+          CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
         run: node scripts/ci.mjs windows
       - name: Preserve portable-scope and native Windows evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-portable-${{ github.sha }}-windows-node${{ matrix.node }}
-          path: ${{ env.CI_ARTIFACT_DIR }}
+          path: ${{ runner.temp }}/sec-hub-ci-evidence
           if-no-files-found: error
           retention-days: 7
