@@ -1,3 +1,5 @@
+import { translate } from './i18n.mjs';
+
 const text = (value) => String(value ?? '').toLocaleLowerCase();
 
 export function compactPath(value) {
@@ -73,17 +75,27 @@ export function runStatusLabel(status) {
   return ({ completed: '실행 완료', partial: '부분 완료', failed: '실패' })[status] ?? '상태 미기록';
 }
 
-export function toolStatusLabel(status) {
-  return ({ completed: '완료', failed: '실패', timed_out: '시간 초과', cancelled: '취소', skipped: '건너뜀', imported: '가져온 결과 · 로컬 실행 아님' })[status] ?? String(status ?? '상태 미기록');
+export function toolStatusLabel(status, locale = 'ko') {
+  const label = ({ completed: '완료', failed: '실패', timed_out: '시간 초과', cancelled: '취소', skipped: '건너뜀', imported: '가져온 결과 · 로컬 실행 아님' })[status];
+  return label ? translate(locale, label) : status == null ? translate(locale, '상태 미기록') : String(status);
 }
 
-export function verificationLabel(value) {
-  if (value === 'candidate') return '후보';
-  if (value === 'confirmed') return '저장된 주장 · 확인됨';
-  if (value == null || value === '') return '보고됨 · 검증 수준 미기록';
+export function verificationLabel(value, locale = 'ko') {
+  if (value === 'candidate') return translate(locale, '후보');
+  if (value === 'confirmed') return translate(locale, '저장된 주장 · 확인됨');
+  if (value == null || value === '') return translate(locale, '보고됨 · 검증 수준 미기록');
   return String(value);
 }
 
 export function comparisonControlState(pending, hasInputs) {
   return { inputsDisabled: Boolean(pending), compareDisabled: Boolean(pending || !hasInputs) };
+}
+
+export function transitionFindingView(findings, state, patch) {
+  const next = { ...state, ...patch };
+  const changedFilter = ['query', 'severity', 'tool'].some((key) => key in patch && patch[key] !== state[key]);
+  const matches = filterFindings(findings, next);
+  next.page = pageItems(matches, changedFilter ? 1 : next.page).page;
+  if (!matches.includes(findings[next.selectedIndex])) next.selectedIndex = null;
+  return next;
 }

@@ -4,54 +4,58 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>SEC HUB / AUDIT DESK</title>
+  <title>SEC HUB / 개발자 워크벤치</title>
   <link rel="stylesheet" href="/assets/style.css">
   <script type="module" src="/assets/app.mjs"></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  <a class="skip-link" href="#main" data-i18n="본문으로 건너뛰기">본문으로 건너뛰기</a>
   <header class="masthead">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">SH</span><div><p class="eyebrow">LOCAL EVIDENCE REGISTER · 01</p><h1>SEC HUB <span>/</span> AUDIT DESK</h1></div></div>
-    <div class="mast-meta"><span class="seal">읽기 전용</span><span id="snapshot-state">시작 스냅샷 대기</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">SH</span><div><p class="eyebrow">LOCAL SECURITY WORKBENCH</p><h1>SEC HUB <span>/</span> <span data-i18n="개발자 워크벤치">개발자 워크벤치</span></h1></div></div>
+    <div class="mast-meta"><label class="language-control"><span data-i18n="화면 언어">화면 언어</span><select id="language-select" aria-label="화면 언어" data-i18n-aria="화면 언어"><option value="ko">KO</option><option value="en">English</option></select></label><span class="seal" data-i18n="읽기 전용">읽기 전용</span><span id="snapshot-state">시작 스냅샷 대기</span></div>
   </header>
   <main id="main">
-    <div class="intro"><p>저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.</p><p class="refresh-note">새 파일을 반영하려면 서버를 다시 시작하세요.</p></div>
+    <div class="intro"><p data-i18n="저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.">저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.</p><p class="refresh-note" data-i18n="새 파일을 반영하려면 서버를 다시 시작하세요.">새 파일을 반영하려면 서버를 다시 시작하세요.</p></div>
     <p id="live-status" class="live-status" role="status" aria-live="polite">화면을 준비하고 있습니다.</p>
-    <div class="desk">
+    <div class="desk" data-reading="list">
       <aside class="catalog panel" aria-labelledby="catalog-title">
-        <div class="section-heading"><div><p class="eyebrow">INDEX / SNAPSHOT</p><h2 id="catalog-title">자료 목록</h2></div><button id="reload" class="quiet-button" type="button">다시 불러오기</button></div>
+        <div class="section-heading"><div><p class="eyebrow">INDEX / SNAPSHOT</p><h2 id="catalog-title" data-i18n="자료 목록">자료 목록</h2></div><button id="reload" class="quiet-button" type="button" data-i18n="다시 불러오기">다시 불러오기</button></div>
         <p id="catalog-counts" class="count-line">불러오는 중…</p>
         <p id="truncation" class="notice" hidden></p>
         <form id="catalog-filters" class="filters">
-          <label>자료 검색<input id="catalog-search" type="search" autocomplete="off" placeholder="실행 ID, 위치, 대상"></label>
-          <div class="filter-pair"><label>자료 종류<select id="kind-filter"><option value="all">전체</option><option value="run">검사 실행</option><option value="comparison">저장된 비교</option><option value="unknown">기타 / 오류</option></select></label>
-          <label>실행 상태<select id="status-filter"><option value="all">전체</option><option value="completed">실행 완료</option><option value="partial">부분 완료</option><option value="failed">실패</option><option value="complete">비교 완료</option><option value="incomplete">비교 불완전</option><option value="error">자료 오류</option></select></label></div>
-          <label>도구 ID<select id="tool-filter"><option value="all">전체 도구</option></select></label>
-          <button id="catalog-reset" class="quiet-button filters-reset" type="button">목록 필터 초기화</button>
+          <label><span data-i18n="자료 검색">자료 검색</span><input id="catalog-search" type="search" autocomplete="off" placeholder="실행 ID, 위치, 대상" data-i18n-placeholder="실행 ID, 위치, 대상"></label>
+          <details class="catalog-advanced"><summary data-i18n="추가 필터">추가 필터</summary><div class="filter-pair"><label><span data-i18n="자료 종류">자료 종류</span><select id="kind-filter"><option value="all" data-i18n="전체">전체</option><option value="run" data-i18n="검사 실행">검사 실행</option><option value="comparison" data-i18n="저장된 비교">저장된 비교</option><option value="unknown" data-i18n="기타 / 오류">기타 / 오류</option></select></label>
+          <label><span data-i18n="실행 상태">실행 상태</span><select id="status-filter"><option value="all" data-i18n="전체">전체</option><option value="completed" data-i18n="실행 완료">실행 완료</option><option value="partial" data-i18n="부분 완료">부분 완료</option><option value="failed" data-i18n="실패">실패</option><option value="complete" data-i18n="비교 완료">비교 완료</option><option value="incomplete" data-i18n="비교 불완전">비교 불완전</option><option value="error" data-i18n="자료 오류">자료 오류</option></select></label></div>
+          <label><span data-i18n="도구 ID">도구 ID</span><select id="tool-filter"><option value="all" data-i18n="전체 도구">전체 도구</option></select></label>
+          <button id="catalog-reset" class="quiet-button filters-reset" type="button" data-i18n="목록 필터 초기화">목록 필터 초기화</button></details>
         </form>
         <p id="catalog-state" class="empty-state">JavaScript가 필요한 화면입니다.</p>
-        <ul id="artifact-list" class="artifact-list" aria-label="저장된 자료"></ul>
+        <ul id="artifact-list" class="artifact-list" aria-label="저장된 자료" data-i18n-aria="저장된 자료"></ul>
       </aside>
       <section class="workspace panel" aria-labelledby="workspace-title">
         <div class="section-heading workspace-title"><div><p class="eyebrow">RECORD / REVIEW</p><h2 id="workspace-title">검사 기록</h2></div><span id="selection-mark" class="selection-mark">선택 없음</span></div>
         <div id="detail-state" class="empty-state">목록에서 저장된 검사 또는 비교를 선택하세요.</div>
         <div id="detail-content" class="detail-content"></div>
         <section class="compare-box" aria-labelledby="compare-title">
-          <div class="section-heading"><div><p class="eyebrow">PAIRWISE REVIEW</p><h3 id="compare-title">두 실행 비교</h3></div><span class="pill">결과는 저장하지 않음</span></div>
-          <p class="muted">비교는 선택한 저장 실행만 사용합니다. 새로 관측은 도입 증명이 아니며, 사라짐은 수정 증명이 아닙니다.</p>
+          <div class="section-heading"><div><p class="eyebrow">PAIRWISE REVIEW</p><h3 id="compare-title" data-i18n="두 실행 비교">두 실행 비교</h3></div><span class="pill" data-i18n="결과는 저장하지 않음">결과는 저장하지 않음</span></div>
+          <p class="muted" data-i18n="비교는 선택한 저장 실행만 사용합니다. 새로 관측은 도입 증명이 아니며, 사라짐은 수정 증명이 아닙니다.">비교는 선택한 저장 실행만 사용합니다. 새로 관측은 도입 증명이 아니며, 사라짐은 수정 증명이 아닙니다.</p>
           <div class="compare-controls">
-            <label>기준 실행<select id="baseline-select"><option value="">실행 선택</option></select></label>
-            <label>현재 실행<select id="current-select"><option value="">실행 선택</option></select></label>
-            <label>기준 심각도<select id="fail-on"><option value="critical">critical</option><option value="high" selected>high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option><option value="any">any</option><option value="none">none</option></select></label>
-            <button id="compare-button" class="primary-button" type="button" disabled>비교 보기</button>
+            <label><span data-i18n="기준 실행">기준 실행</span><select id="baseline-select"><option value="" data-i18n="실행 선택">실행 선택</option></select></label>
+            <label><span data-i18n="현재 실행">현재 실행</span><select id="current-select"><option value="" data-i18n="실행 선택">실행 선택</option></select></label>
+            <label><span data-i18n="기준 심각도">기준 심각도</span><select id="fail-on"><option value="critical">critical</option><option value="high" selected>high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option><option value="any">any</option><option value="none">none</option></select></label>
+            <button id="compare-button" class="primary-button" type="button" disabled data-i18n="비교 보기">비교 보기</button>
           </div>
           <div id="comparison-state" class="comparison-state" role="status" aria-live="polite"></div>
           <div id="comparison-content"></div>
         </section>
       </section>
+      <aside id="evidence-panel" class="evidence-panel panel" aria-labelledby="evidence-title">
+        <div class="section-heading"><div><p class="eyebrow">FINDING / EVIDENCE</p><h2 id="evidence-title" data-i18n="저장된 근거">저장된 근거</h2></div><button id="evidence-back" class="quiet-button" type="button" data-i18n="결과로 돌아가기">결과로 돌아가기</button></div>
+        <div id="evidence-content"><p class="evidence-empty empty-state" data-i18n="목록에서 항목을 선택하면 저장된 근거를 확인할 수 있습니다.">목록에서 항목을 선택하면 저장된 근거를 확인할 수 있습니다.</p></div>
+      </aside>
     </div>
-    <noscript><p class="noscript">이 자료 화면을 사용하려면 브라우저에서 JavaScript를 켜세요.</p></noscript>
+    <noscript><p class="noscript" data-i18n="이 자료 화면을 사용하려면 브라우저에서 JavaScript를 켜세요.">이 자료 화면을 사용하려면 브라우저에서 JavaScript를 켜세요.</p></noscript>
   </main>
-  <footer><span>SEC HUB · LOCAL AUDIT DESK</span><span>고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다</span></footer>
+  <footer><span>SEC HUB · LOCAL WORKBENCH</span><span data-i18n="고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다">고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다</span></footer>
 </body>
 </html>

@@ -14,7 +14,7 @@ const SECURITY_HEADERS = Object.freeze({
   'Referrer-Policy': 'no-referrer',
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
 });
-const MIME = Object.freeze({ '/': 'text/html; charset=utf-8', '/assets/app.mjs': 'text/javascript; charset=utf-8', '/assets/style.css': 'text/css; charset=utf-8', '/assets/view-model.mjs': 'text/javascript; charset=utf-8' });
+const MIME = Object.freeze({ '/': 'text/html; charset=utf-8', '/assets/app.mjs': 'text/javascript; charset=utf-8', '/assets/style.css': 'text/css; charset=utf-8', '/assets/view-model.mjs': 'text/javascript; charset=utf-8', '/assets/i18n.mjs': 'text/javascript; charset=utf-8' });
 const RUN_STATUSES = new Set(['completed', 'partial', 'failed']);
 const TOOL_STATUSES = new Set(['completed', 'failed', 'skipped', 'timed_out', 'cancelled', 'imported']);
 const SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'info', 'unknown']);
@@ -54,6 +54,7 @@ async function preloadAssets() {
     ['/assets/app.mjs', path.join(src, 'web', 'app.mjs')],
     ['/assets/style.css', path.join(src, 'web', 'style.css')],
     ['/assets/view-model.mjs', path.join(src, 'web', 'view-model.mjs')],
+    ['/assets/i18n.mjs', path.join(src, 'web', 'i18n.mjs')],
   ]);
   const assets = new Map();
   for (const [route, filename] of files) {

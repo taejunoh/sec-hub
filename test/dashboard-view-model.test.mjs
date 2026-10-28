@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, gateLabel, pageItems, runStatusLabel, toolStatusLabel, verificationLabel } from '../src/web/view-model.mjs';
+import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, gateLabel, pageItems, runStatusLabel, toolStatusLabel, verificationLabel, transitionFindingView } from '../src/web/view-model.mjs';
 
 const artifacts = [
   { id: 'a'.repeat(64), kind: 'run', state: 'ready', label: 'runs/one/run.json', summary: { runId: 'same', status: 'partial', target: { path: '/alpha' }, tools: [{ id: 'osv', status: 'imported' }] } },
@@ -133,4 +133,29 @@ test('adversarial long path tokens finish within an isolated deadline and retain
   assert.equal(result.error?.code, undefined, 'long source tokens must not exhaust the isolated deadline');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(compactPath('/workspace/long-parent-directory/saved-result-folder/nested-package/package-lock.json').summary, '…/nested-package/package-lock.json');
+});
+
+// Catches stale evidence when filters exclude a selected source row, including duplicate IDs.
+test('finding selection is scoped to matching source rows and filtering resets the page', () => {
+  const findings = [{ id: 'same', title: '<img src=x>', severity: 'high', toolId: 'osv', location: String.raw`C:\원본\file.json` }, { id: 'same', title: 'Other', severity: 'low', toolId: 'semgrep' }];
+  const state = { query: '', severity: 'all', tool: 'all', page: 2, selectedIndex: 0, locale: 'ko' };
+  assert.deepEqual(transitionFindingView(findings, state, { severity: 'low' }), { ...state, severity: 'low', page: 1, selectedIndex: null });
+  assert.equal(transitionFindingView(findings, state, { query: '원본' }).selectedIndex, 0);
+  assert.equal(findings[0].title, '<img src=x>');
+});
+
+// Catches language changes clearing filters, selection or the current bounded page.
+test('locale changes preserve finding view state and page changes keep selection', () => {
+  const findings = Array.from({ length: 140 }, (_, i) => ({ title: `Item ${i}`, severity: 'high', toolId: 'osv' }));
+  const state = { query: 'Item', severity: 'high', tool: 'osv', page: 2, selectedIndex: 125, locale: 'ko' };
+  assert.deepEqual(transitionFindingView(findings, state, { locale: 'en' }), { ...state, locale: 'en' });
+  assert.deepEqual(transitionFindingView(findings, state, { page: 99 }), { ...state, page: 2 });
+});
+
+// Catches accidental translation of unknown stored status/verification identifiers.
+test('localized labels translate known semantics and retain unknown stored identifiers', () => {
+  assert.equal(toolStatusLabel('imported', 'en'), 'Imported results · not a local execution');
+  assert.equal(verificationLabel('candidate', 'en'), 'Candidate');
+  assert.equal(toolStatusLabel('증거', 'en'), '증거');
+  assert.equal(verificationLabel('증거', 'en'), '증거');
 });

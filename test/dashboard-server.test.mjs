@@ -174,3 +174,19 @@ test('serves engine-valid source-record wrappers without assuming optional neste
     assert.match(response, /^HTTP\/1\.1 200/);
   } finally { await dashboard.close(); }
 }));
+
+test('serves only the exact local locale module with JavaScript MIME and existing request policy', async () => sandbox(async (root) => {
+  const dashboard = await startDashboard({ runs: root, port: 0 });
+  try {
+    const port = Number(new URL(dashboard.url).port);
+    const response = await rawRequest(port, ['GET /assets/i18n.mjs HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Connection: close']);
+    assert.match(response, /^HTTP\/1\.1 200/);
+    assert.match(response, /Content-Type: text\/javascript; charset=utf-8/i);
+    assert.match(response, /Content-Security-Policy:/i);
+    assert.equal(response.split('\r\n\r\n')[1], await readFile(new URL('../src/web/i18n.mjs', import.meta.url), 'utf8'));
+    for (const target of ['/assets/other.mjs', '/assets/i18n.mjs/extra']) {
+      assert.match(await rawRequest(port, [`GET ${target} HTTP/1.1`, `Host: 127.0.0.1:${port}`, 'Connection: close']), /^HTTP\/1\.1 404/);
+    }
+    assert.match(await rawRequest(port, ['GET /assets/i18n.mjs HTTP/1.1', `Host: 127.0.0.1:${port}`, 'Origin: http://evil.example', 'Connection: close']), /^HTTP\/1\.1 403/);
+  } finally { await dashboard.close(); }
+}));
