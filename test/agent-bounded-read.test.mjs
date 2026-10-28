@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {open,mkdtemp,writeFile,appendFile,rm,rename,link} from 'node:fs/promises';
-import {join,resolve} from 'node:path';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {safeRead} from '../src/agents/validation.mjs';
-const scratch=resolve('../../work');
-async function fixture(t){const root=await mkdtemp(join(scratch,'agent-read-test-')),file=join(root,'data');await writeFile(file,'small');t.after(()=>rm(root,{recursive:true,force:true}));return {root,file};}
+async function fixture(t){const root=await mkdtemp(join(tmpdir(),'agent-read-test-')),file=join(root,'data');await writeFile(file,'small');t.after(()=>rm(root,{recursive:true,force:true}));return {root,file};}
 test('stable regular files read through the exact byte limit',async t=>{const {file}=await fixture(t);assert.equal((await safeRead(file,5)).toString(),'small');await assert.rejects(safeRead(file,4),/oversized/i);});
 test('a file growing after its size checks never causes more than limit plus one bytes to be read',async t=>{
   const {file}=await fixture(t),probe=await open(file,'r'),prototype=Object.getPrototypeOf(probe);await probe.close();
@@ -18,7 +18,7 @@ test('a file growing after its size checks never causes more than limit plus one
 });
 test('replacement of the directory entry during a descriptor read is refused',async t=>{
   const {file}=await fixture(t),probe=await open(file,'r'),prototype=Object.getPrototypeOf(probe);await probe.close();const stat=prototype.stat;let replaced=false;
-  prototype.stat=async function(...args){const result=await stat.apply(this,args);if(!replaced){replaced=true;await rename(file,`${file}.old`);await writeFile(file,'small');}return result;};
+  prototype.stat=async function(...args){const result=await stat.apply(this,args);if(result.isFile()&&!replaced){replaced=true;await rename(file,`${file}.old`);await writeFile(file,'small');}return result;};
   try{await assert.rejects(safeRead(file,16),/changed|unsafe/i);}finally{prototype.stat=stat;}
 });
 test('hardlinked regular files are refused',async t=>{const {file}=await fixture(t);await link(file,`${file}.link`);await assert.rejects(safeRead(file),/unsafe/i);});

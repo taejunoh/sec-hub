@@ -1,9 +1,13 @@
 import { spawn } from 'node:child_process';
+import { win32 } from 'node:path';
 import { createRedactor } from './redaction.mjs';
 
 export function runProcess(spec, options={}) {
   const {timeoutMs=120000,maxOutputBytes=5*1024*1024,signal,env=process.env,redactOutput=true}=options;
   const redact=redactOutput?createRedactor(env):String;
+  // The host environment is trusted; per-command env/cwd must not select the
+  // cleanup executable. Never search PATH or run a shell for tree termination.
+  const windowsRoot=process.env.SystemRoot??process.env.SYSTEMROOT;
   if(!spec||typeof spec.command!=='string'||!spec.command||!Array.isArray(spec.args)||spec.args.some(arg=>typeof arg!=='string'))return Promise.reject(new Error('Executable and string argv are required'));
   if(!Number.isFinite(timeoutMs)||timeoutMs<=0||!Number.isSafeInteger(maxOutputBytes)||maxOutputBytes<1)return Promise.reject(new Error('Positive timeout and output limit are required'));
   return new Promise(resolveResult=>{
@@ -23,7 +27,35 @@ export function runProcess(spec, options={}) {
     };
     const stop=(status,message)=>{
       if(stopping||settled)return;
-      stopping=true;state=status;reason=message;clearTimeout(timer);kill('SIGTERM');
+      stopping=true;state=status;reason=message;clearTimeout(timer);
+      if(process.platform==='win32'){
+        let treeKiller,cleanupDone=false;
+        const cleanupFailed=detail=>{reason=`${message}; Windows process-tree cleanup ${detail}; termination of descendants not confirmed`;};
+        const completed=detail=>{
+          if(cleanupDone||settled)return;
+          cleanupDone=true;escalated=true;
+          if(detail){cleanupFailed(detail);kill('SIGKILL');}
+          finishWhenClean();
+        };
+        hardDeadline=setTimeout(()=>{
+          cleanupDone=true;cleanupFailed('exceeded its deadline');
+          try{treeKiller?.kill('SIGKILL');treeKiller?.unref();}catch{}
+          kill('SIGKILL');child?.stdout?.destroy();child?.stderr?.destroy();child?.unref();settle();
+        },1000);
+        if(!Number.isSafeInteger(child?.pid)||child.pid<=0||typeof windowsRoot!=='string'||!/^[A-Za-z]:[\\/]/.test(windowsRoot)){
+          completed('could not start (invalid PID or SystemRoot)');return;
+        }
+        try{
+          // Windows SIGTERM kills the leader abruptly. Tree discovery must run
+          // first: no leader-only TERM and no delayed second lookup by reused PID.
+          const systemDirectory=win32.join(windowsRoot,'System32');
+          treeKiller=spawn(win32.join(systemDirectory,'taskkill.exe'),['/PID',String(child.pid),'/T','/F'],{cwd:systemDirectory,env:process.env,shell:false,windowsHide:true,stdio:'ignore'});
+          treeKiller.once('error',()=>completed('could not start'));
+          treeKiller.once('close',code=>completed(code===0?undefined:'failed'));
+        }catch{completed('could not start');}
+        return;
+      }
+      kill('SIGTERM');
       // A leader may close immediately while same-group descendants ignore TERM.
       // Keep this referenced timer alive and wait for KILL before resolving.
       escalation=setTimeout(()=>{kill('SIGKILL');escalated=true;finishWhenClean();},300);

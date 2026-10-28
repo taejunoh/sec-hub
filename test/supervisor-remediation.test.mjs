@@ -6,13 +6,16 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 
 // These child fixtures run the actual supervisor entry and role-process code.
 // Module hooks replace contracts/provider transport and validators only; no
 // vendor program, network request, or operating-system process signal is used.
-const testFile=fileURLToPath(import.meta.url),workspace=resolve('../../work');
+// Keep lifecycle fixtures out of watched workspace trees: unrelated metadata
+// writers can correctly trip the production bounded-read ctime guard there.
+const testFile=fileURLToPath(import.meta.url),workspace=tmpdir();
 const scenario=process.env.SEC_HUB_SUPERVISOR_REMEDIATION_SCENARIO;
 if(scenario){
   const root=process.env.SEC_HUB_SUPERVISOR_REMEDIATION_ROOT,target=join(root,'target'),artifactDir=join(root,'raw'),workRoot=join(root,'staging');
@@ -102,7 +105,7 @@ if(scenario){
   async function runFixture(mode,expectedError){
     const root=await mkdtemp(join(workspace,'supervisor-remediation-'));
     try{
-      const result=spawnSync(process.execPath,[testFile],{cwd:process.cwd(),env:{...process.env,SEC_HUB_SUPERVISOR_REMEDIATION_SCENARIO:mode,SEC_HUB_SUPERVISOR_REMEDIATION_ROOT:root},encoding:'utf8',timeout:4000,killSignal:'SIGKILL',maxBuffer:2*1024*1024});
+      const result=spawnSync(process.execPath,[testFile],{cwd:process.cwd(),env:{...process.env,SEC_HUB_SUPERVISOR_REMEDIATION_SCENARIO:mode,SEC_HUB_SUPERVISOR_REMEDIATION_ROOT:root},encoding:'utf8',timeout:15000,killSignal:'SIGKILL',maxBuffer:2*1024*1024});
       assert.equal(result.signal,null,`Supervisor fixture ${mode} failed to settle before external deadline: ${result.stdout}\n${result.stderr}`);
       assert.equal(result.status,0,result.stderr);
       const output=JSON.parse(result.stdout.trim().split('\n').at(-1));

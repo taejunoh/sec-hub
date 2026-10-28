@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm,chmod,symlink,access} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {join,resolve} from 'node:path';
+import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {PINS,verifySourcePin,runOfficialValidators,sha256} from '../src/agents/validation.mjs';
-const execute=promisify(execFile),scratch=resolve('../../work');
+const execute=promisify(execFile);
 async function fixture(t){
-  const root=await mkdtemp(join(scratch,'vendor-pin-test-')),skill=join(root,'skills/security-audit');
+  const root=await mkdtemp(join(tmpdir(),'vendor-pin-test-')),skill=join(root,'skills/security-audit');
   await mkdir(skill,{recursive:true});
   const marker=join(root,'.git','validator-ran'),source=`require('node:fs').writeFileSync(${JSON.stringify(marker)},'ran');\n`;
   await writeFile(join(skill,'SKILL.md'),'Pinned instructions\n');

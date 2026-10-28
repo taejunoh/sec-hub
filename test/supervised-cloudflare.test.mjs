@@ -111,11 +111,49 @@ for(const mode of ['foreign-unit','wrong-owner','critic-incomplete','invalid-jso
 test('supervised independently retained record tampering fails even when byte hashes are resealed',{skip:!available},async()=>{
   const f=await fixture('candidate');try{assert.equal(await runSupervisedCloudflare(f.payload),0);const records=await f.json('findings.json');records[0].title='Controller replacement';const bytes=JSON.stringify(records);await writeFile(join(f.payload.artifactDir,'findings.json'),bytes);const m=await f.json('execution-manifest.json');m.preRedactionHashes['findings.json']=sha256(bytes);await writeFile(join(f.payload.artifactDir,'execution-manifest.json'),JSON.stringify(m));await assert.rejects(validateSupervisedCloudflare(f.ctx),/unchanged native decisions/i);}finally{await f.dispose();}
 });
+async function waitForRoleEvent(file,predicate,settled) {
+  const deadline=performance.now()+30000;
+  while(performance.now()<deadline){
+    try{
+      const lines=(await readFile(file,'utf8')).split('\n').slice(0,-1);
+      for(const line of lines.filter(Boolean)){const event=JSON.parse(line);if(predicate(event))return event;}
+    }catch(error){if(error.code!=='ENOENT')throw error;}
+    if(settled())throw new Error('Supervisor settled before the required role event');
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  throw new Error('Supervisor fixture did not reach the required role event within 30 seconds');
+}
+async function waitForProcessExit(pid,timeoutMs) {
+  const deadline=performance.now()+timeoutMs;
+  while(performance.now()<deadline){
+    try{process.kill(pid,0);}catch(error){if(error.code==='ESRCH')return;throw error;}
+    await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  assert.throws(()=>process.kill(pid,0),/ESRCH/);
+}
 test('supervised cancellation through outer process runner kills TERM-resistant owned descendants',{skip:!available},async()=>{
-  const f=await fixture('hang');try{const result=await runProcess({command:process.execPath,args:[resolve('src/agents/native-wrapper.mjs'),JSON.stringify(f.payload)]},{timeoutMs:1500,redactOutput:false});assert.equal(result.status,'timed_out');assert.ok(result.durationMs<4000);const events=(await readFile(join(f.payload.artifactDir,'roles/recon-1a-1/events.jsonl'),'utf8')).split('\n').filter(Boolean).map(JSON.parse),pid=Number(events.find(e=>e.item?.text?.startsWith('FAKE_DESCENDANT_PID='))?.item.text.split('=')[1]);assert.ok(pid>0);assert.throws(()=>process.kill(pid,0),/ESRCH/);}finally{await f.dispose();}
+  const f=await fixture('hang'),controller=new AbortController();let settled=false;
+  const running=runProcess({command:process.execPath,args:[resolve('src/agents/native-wrapper.mjs'),JSON.stringify(f.payload)]},{timeoutMs:35000,signal:controller.signal,redactOutput:false});
+  running.then(()=>{settled=true;},()=>{settled=true;});
+  try{
+    const event=await waitForRoleEvent(join(f.payload.artifactDir,'roles/recon-1a-1/events.jsonl'),event=>event.item?.text?.startsWith('FAKE_DESCENDANT_PID='),()=>settled);
+    const pid=Number(event.item.text.split('=')[1]);assert.ok(pid>0);process.kill(pid,0);
+    const signalledAt=performance.now();controller.abort();const result=await running;
+    assert.equal(result.status,'cancelled');assert.ok(performance.now()-signalledAt<4000);
+    assert.throws(()=>process.kill(pid,0),/ESRCH/);
+  }finally{controller.abort();await running;await f.dispose();}
 });
 test('supervised forbidden global-skill command aborts stalled planner before role timeout',{skip:!available},async()=>{
-  const f=await fixture('planner-global-skill-stall');try{const result=await runProcess({command:process.execPath,args:[resolve('src/agents/native-wrapper.mjs'),JSON.stringify(f.payload)]},{timeoutMs:1800,redactOutput:false});assert.equal(result.status,'failed');assert.ok(result.durationMs<1600);const m=await f.json('execution-manifest.json');assert.equal(m.roles.length,5);assert.equal(m.roles.at(-1).role,'planner');assert.match(m.reasons.join(';'),/source-only command policy violation/);assert.ok(!m.roles.at(-1).timedOut);}finally{await f.dispose();}
+  const f=await fixture('planner-global-skill-stall');let settled=false;
+  const running=runProcess({command:process.execPath,args:[resolve('src/agents/native-wrapper.mjs'),JSON.stringify(f.payload)]},{timeoutMs:35000,redactOutput:false});
+  running.then(()=>{settled=true;},()=>{settled=true;});
+  try{
+    const event=await waitForRoleEvent(join(f.payload.artifactDir,'roles/planner-5/events.jsonl'),event=>event.item?.id==='forbidden-skill',()=>settled);
+    assert.ok(Number.isInteger(event.fixturePid)&&event.fixturePid>0);
+    await waitForProcessExit(event.fixturePid,1600);
+    const result=await running;assert.equal(result.status,'failed');
+    const m=await f.json('execution-manifest.json');assert.equal(m.roles.length,5);assert.equal(m.roles.at(-1).role,'planner');assert.match(m.reasons.join(';'),/source-only command policy violation/);assert.ok(!m.roles.at(-1).timedOut);
+  }finally{await running;await f.dispose();}
 });
 test('supervised incremental policy decoder accepts split UTF8 JSONL chunks',{skip:!available},async()=>{
   const f=await fixture('utf8-chunks');try{assert.equal(await runSupervisedCloudflare(f.payload),0);assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);}finally{await f.dispose();}
