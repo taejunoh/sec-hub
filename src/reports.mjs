@@ -186,10 +186,15 @@ export async function writeReports(run, directory) {
   const sarif = path.join(outputDirectory, 'results.sarif');
   const normalizedRun = redactValue({ ...run, findings });
   const reportFindings = normalizedRun.findings;
-  await Promise.all([
-    atomicWriteFile(json, `${JSON.stringify(normalizedRun, null, 2)}\n`),
-    atomicWriteFile(html, renderHtml(normalizedRun, reportFindings)),
-    atomicWriteFile(sarif, `${JSON.stringify(toSarif(normalizedRun, reportFindings), null, 2)}\n`),
-  ]);
+  // Serialization must succeed before any writer starts. A failed writer still
+  // owns its sibling work until all writes settle (job admission/shutdown rely on it).
+  const payloads = [
+    [json, `${JSON.stringify(normalizedRun, null, 2)}\n`],
+    [html, renderHtml(normalizedRun, reportFindings)],
+    [sarif, `${JSON.stringify(toSarif(normalizedRun, reportFindings), null, 2)}\n`],
+  ];
+  const writes = await Promise.allSettled(payloads.map(([file, content]) => atomicWriteFile(file, content)));
+  const failure = writes.find(write => write.status === 'rejected');
+  if (failure) throw failure.reason;
   return { json, html, sarif };
 }

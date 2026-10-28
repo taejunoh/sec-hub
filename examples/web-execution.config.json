@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "targets": [
+    {
+      "label": "Local project",
+      "path": "/absolute/project",
+      "config": "/absolute/scanner-config.json",
+      "tools": ["osv", "skillspector"],
+      "ai": false,
+      "timeoutMs": 120000
+    }
+  ],
+  "maxJobTimeMs": 900000,
+  "maxJobs": 20
+}

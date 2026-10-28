@@ -1,3 +1,4 @@
+import { initializeExecutionView } from './execution-view.mjs';
 import { translate } from './i18n.mjs';
 import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, gateLabel, pageItems, runStatusLabel, toolStatusLabel, verificationLabel, transitionFindingView } from './view-model.mjs';
 
@@ -31,6 +32,10 @@ let localComparison;
 let listScroll = 0;
 let listFocusIndex = null;
 let catalog;
+let catalogGeneration = 0;
+let catalogRequest = 0;
+let executionView;
+let executionMode = { enabled: false, expired: false, lastRefresh: null };
 let selectedId = null;
 let detailController;
 let compareController;
@@ -165,21 +170,60 @@ async function apiJson(url, signal) {
   if (!response.ok) throw new Error(body?.error?.message ?? '요청을 처리할 수 없습니다.');
   return body;
 }
+function updateSnapshotChrome() {
+  if (!catalog) return;
+  if (executionMode.enabled) {
+    chromeMessage('snapshot-state', executionMode.lastRefresh || executionMode.generation > 0 ? '마지막 결과 반영 · {v0}' : '마지막 결과 반영 없음 · 시작 스냅샷 {v0}', { v0: executionMode.lastRefresh ?? catalog.snapshot.createdAt });
+  } else chromeMessage('snapshot-state', '시작 스냅샷 · {v0} · 새 파일은 서버 재시작 후 반영', { v0: catalog.snapshot.createdAt });
+}
+function updateExecutionMode(mode) {
+  executionMode = mode;
+  $('execution-seal').dataset.i18n = mode.enabled ? '로컬 실행 가능' : '읽기 전용';
+  $('refresh-note').dataset.i18n = mode.enabled ? '검사 후 결과 반영을 누르면 새 파일을 읽습니다.' : '새 파일을 반영하려면 서버를 다시 시작하세요.';
+  $('snapshot-note').dataset.i18n = mode.enabled ? '명시적 결과 반영 / 저장된 결과는 안전 판정이 아닙니다' : '고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다';
+  for (const id of ['execution-seal', 'refresh-note', 'snapshot-note']) $(id).textContent = t($(id).dataset.i18n);
+  updateSnapshotChrome();
+}
+async function applyExecutionCatalog(value, artifactId) {
+  catalogController?.abort();
+  detailController?.abort();
+  compareController?.abort();
+  ++catalogRequest;
+  ++catalogGeneration;
+  ++detailRequest;
+  ++compareRequest;
+  comparisonPending = false;
+  localComparison = null;
+  savedComparison = null;
+  $('comparison-content').replaceChildren();
+  delete $('comparison-content').dataset.comparisonPage;
+  chromeMessage('comparison-state', '');
+  catalog = value;
+  clearDetail();
+  updateToolOptions();
+  drawCatalog();
+  updateSnapshotChrome();
+  if (artifactId && catalog.artifacts.some((item) => item.id === artifactId)) await selectArtifact(artifactId);
+}
 async function loadCatalog() {
+  const request = ++catalogRequest;
+  const generation = catalogGeneration;
   catalogController?.abort();
   catalogController = new AbortController();
   setCatalogState('시작 스냅샷을 불러오는 중…');
   chromeMessage('live-status', '저장된 자료 목록을 불러오는 중입니다.');
   try {
     const value = await apiJson('/api/catalog', catalogController.signal);
-    catalog = value;
-    chromeMessage('snapshot-state', '시작 스냅샷 · {v0} · 새 파일은 서버 재시작 후 반영', { v0: value.snapshot.createdAt });
+    if (request !== catalogRequest || generation !== catalogGeneration) return;
+    if (catalog && catalog.snapshot.createdAt !== value.snapshot.createdAt) await applyExecutionCatalog(value, null);
+    else catalog = value;
+    updateSnapshotChrome();
     updateToolOptions();
     drawCatalog();
     chromeMessage('live-status', '저장된 자료 {v0}개를 불러왔습니다.', { v0: value.artifacts.length });
     if (selectedId && !catalog.artifacts.some((item) => item.id === selectedId)) clearDetail('선택한 자료가 스냅샷에 없습니다.');
   } catch (error) {
-    if (error.name === 'AbortError') return;
+    if (error.name === 'AbortError' || request !== catalogRequest || generation !== catalogGeneration) return;
     catalog = undefined;
     chromeMessage('snapshot-state', '스냅샷을 불러오지 못함');
     chromeMessage('catalog-counts', '목록을 불러오지 못했습니다.');
@@ -192,6 +236,7 @@ async function loadCatalog() {
 }
 function clearDetail(message = '목록에서 저장된 검사 또는 비교를 선택하세요.') {
   detailController?.abort();
+  ++detailRequest;
   selectedId = null;
   activeRun = null;
   selectedArtifact = null;
@@ -614,6 +659,7 @@ async function selectArtifact(id) {
   detailController?.abort();
   detailController = new AbortController();
   const request = ++detailRequest;
+  const generation = catalogGeneration;
   selectedId = id;
   activeRun = null;
   savedComparison = null;
@@ -630,7 +676,7 @@ async function selectArtifact(id) {
   chromeMessage('live-status', '선택한 저장 자료를 여는 중입니다.');
   try {
     const value = await apiJson(`/api/artifacts/${id}`, detailController.signal);
-    if (request !== detailRequest) return;
+    if (request !== detailRequest || generation !== catalogGeneration) return;
     $('detail-state').hidden = true;
     const parent = $('detail-content');
     parent.replaceChildren();
@@ -651,7 +697,7 @@ async function selectArtifact(id) {
       chromeMessage('detail-state', artifact.error?.message ?? '자료를 표시할 수 없습니다.');
     }
   } catch (error) {
-    if (error.name === 'AbortError' || request !== detailRequest) return;
+    if (error.name === 'AbortError' || request !== detailRequest || generation !== catalogGeneration) return;
     $('detail-state').hidden = false;
     chromeMessage('detail-state', '{v0} 다시 목록에서 선택해 재시도하세요.', () => ({ v0: t(error.message) }));
     chromeMessage('live-status', '저장 자료를 열지 못했습니다.');
@@ -664,6 +710,7 @@ async function compareSelected() {
   compareController?.abort();
   compareController = new AbortController();
   const request = ++compareRequest;
+  const generation = catalogGeneration;
   comparisonPending = true;
   updateComparisonControls();
   chromeMessage('comparison-state', '비교 중…');
@@ -674,18 +721,18 @@ async function compareSelected() {
   try {
     const params = new URLSearchParams({ baseline, current, failOn: $('fail-on').value });
     const value = await apiJson(`/api/compare?${params}`, compareController.signal);
-    if (request !== compareRequest) return;
+    if (request !== compareRequest || generation !== catalogGeneration) return;
     $('comparison-content').replaceChildren();
     localComparison = value;
     drawComparison($('comparison-content'), value.comparison, t('메모리 비교 · 저장되지 않음'), value.inputs);
     chromeMessage('comparison-state', '대상 {v0} · 입력 자료 해시를 함께 표시', { v0: value.comparison.baseline?.target?.path ?? t('기록 없음') });
     chromeMessage('live-status', gateLabel(value.comparison.gate.exitCode));
   } catch (error) {
-    if (error.name === 'AbortError' || request !== compareRequest) return;
+    if (error.name === 'AbortError' || request !== compareRequest || generation !== catalogGeneration) return;
     chromeMessage('comparison-state', '{v0} 실행을 다시 선택하고 재시도하세요.', () => ({ v0: t(error.message) }));
     chromeMessage('live-status', '비교 요청에 실패했습니다.');
   } finally {
-    if (request === compareRequest) {
+    if (request === compareRequest && generation === catalogGeneration) {
       comparisonPending = false;
       updateComparisonControls();
     }
@@ -708,7 +755,7 @@ $('language-select').addEventListener('change', () => {
   const savedPage = $('detail-content').dataset.comparisonPage;
   applyLanguage();
   if (catalog) {
-    chromeMessage('snapshot-state', '시작 스냅샷 · {v0} · 새 파일은 서버 재시작 후 반영', { v0: catalog.snapshot.createdAt });
+    updateSnapshotChrome();
     drawCatalog();
   }
   if (activeRun) {
@@ -727,6 +774,7 @@ $('language-select').addEventListener('change', () => {
     chromeMessage('comparison-state', '대상 {v0} · 입력 자료 해시를 함께 표시', { v0: localComparison.comparison.baseline?.target?.path ?? t('기록 없음') });
   }
   drawEvidence();
+  executionView?.render();
   document.querySelector('.desk').dataset.reading = reading;
   window.scrollTo({ top: scroll });
 });
@@ -751,6 +799,7 @@ for (const id of ['baseline-select', 'current-select']) $(id).addEventListener('
 chromeMessage('selection-mark', '선택 없음');
 chromeMessage('detail-state', '목록에서 저장된 검사 또는 비교를 선택하세요.');
 chromeMessage('workspace-title', '검사 기록');
+executionView = initializeExecutionView({ document, window, getLocale: () => locale, applyCatalog: applyExecutionCatalog, onModeChange: updateExecutionMode });
 applyLanguage();
 drawEvidence();
 loadCatalog();

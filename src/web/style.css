@@ -334,3 +334,26 @@ footer { display: flex; justify-content: space-between; gap: .8rem; padding: .8r
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+.execution-panel { margin: -.15rem 0 .9rem; border-bottom: 1px solid var(--line); }
+.execution-panel > summary { min-height: 40px; padding: .35rem 0 .6rem; color: var(--accent); font-weight: 700; font-size: .9rem; cursor: pointer; }
+.execution-body { display: grid; min-width: 0; gap: .6rem; padding-bottom: .9rem; }
+.execution-scope { margin: 0; color: var(--muted); font-size: .72rem; }
+.execution-target-label { display: grid; gap: .25rem; color: var(--muted); font: 700 10px/1.4 var(--mono); }
+.execution-toolset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.execution-toolset legend { margin-bottom: .2rem; color: var(--muted); font: 700 10px/1.4 var(--mono); }
+#execution-tools { display: grid; grid-template-columns: minmax(0, 1fr); }
+.execution-tool { display: flex; align-items: center; gap: .5rem; min-height: 36px; overflow-wrap: anywhere; cursor: pointer; }
+.execution-tool input { flex: 0 0 16px; width: 16px; min-height: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.execution-tool .mono { font-size: 11px; }
+.execution-actions { display: flex; flex-wrap: wrap; gap: .35rem; }
+.execution-actions > button { flex: 1 1 auto; min-height: 40px; }
+.execution-status { margin: 0; color: var(--ink); font-size: .77rem; overflow-wrap: anywhere; }
+.execution-status[data-state="cancelling"], .execution-status[data-state="failed"] { color: var(--danger); }
+.execution-progress { display: grid; gap: .25rem; padding: .6rem; border-left: 2px solid var(--accent); background: var(--canvas); font: 10px/1.5 var(--mono); overflow-wrap: anywhere; }
+.execution-progress > strong { color: var(--accent); }
+.execution-progress > p { margin: .1rem 0; color: var(--muted); font: 11px/1.5 var(--sans); }
+#execution-tool-status { display: flex; flex-wrap: wrap; gap: .25rem; margin: .2rem 0 0; padding: 0; list-style: none; }
+.execution-refresh { width: 100%; min-height: 40px; border-color: var(--accent); color: var(--accent); }
+#execution-panel[hidden], #execution-panel [hidden] { display: none !important; }
+@media (pointer: coarse) { .execution-tool, .execution-actions > button, .execution-refresh, #execution-target { min-height: 44px; } }

@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { resolve, join, dirname, isAbsolute } from 'node:path';
 import { createRedactor, redactValue } from './redaction.mjs';
 
-const VERSION='0.2.4';
+const VERSION='0.3.0';
 const HELP=`Sec Hub ${VERSION} — local security scanner orchestration
 
 Usage:
@@ -11,7 +11,7 @@ Usage:
                [--timeout seconds] [--out directory] [--config file]
   sec-hub report <run-directory-or-run.json>
   sec-hub compare BASE CURRENT [--fail-on critical|high|medium|low|info|any|none] [--out NEWDIR]
-  sec-hub serve --runs ABS_ROOT [--port 0]
+  sec-hub serve --runs ABS_ROOT [--port 0] [--execution-config ABS_MANIFEST]
   sec-hub bridge <cloudflare|anthropic> [--out directory]
   sec-hub import <cloudflare|anthropic> <file> [--target path] [--out directory]
   sec-hub --help | --version
@@ -24,9 +24,9 @@ Reports include JSON, HTML and SARIF. --out must be an empty directory.
 Compare reads two saved runs offline and prints the complete comparison JSON. Its default gate fails on new or regressed high/critical findings; --fail-on may select another severity, any, or none. Incomplete coverage or an unknown relevant severity returns 2.
 Scan/report exit codes: 0 complete/no findings; 1 complete/findings; 2 incomplete/error.
 Compare exit codes: 0 complete/gate pass; 1 complete/gate violation; 2 invalid input, incomplete scope, or relevant unknown severity.
-Serve opens a read-only dashboard on 127.0.0.1. --runs must be an absolute directory; --port is a decimal integer from 0 to 65535 (default 0).
+Serve opens a read-only dashboard on 127.0.0.1. An explicit --execution-config absolute manifest enables approved local scans; its launch URL contains a temporary session credential. --runs must be an absolute directory; --port is a decimal integer from 0 to 65535 (default 0).
 `;
-const optionsByCommand={doctor:['json','config','ai'],scan:['ai','tools','url','timeout','out','config'],report:[],compare:['fail-on','out'],serve:['runs','port'],bridge:['out'],import:['target','out']};
+const optionsByCommand={doctor:['json','config','ai'],scan:['ai','tools','url','timeout','out','config'],report:[],compare:['fail-on','out'],serve:['runs','port','execution-config'],bridge:['out'],import:['target','out']};
 const failOnValues=new Set(['critical','high','medium','low','info','any','none']);
 const stable=value=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
 function parseArgs(args,allowed){
@@ -64,16 +64,16 @@ export async function main(argv,{stdout=process.stdout,stderr=process.stderr}={}
       const runs=options.runs;
       if(!runs)throw new Error('serve requires --runs ABS_ROOT');
       if(!isAbsolute(runs))throw new Error('--runs must be an absolute directory path');
-      const rootInfo=await stat(runs);
-      if(!rootInfo.isDirectory())throw new Error('--runs must point to a directory');
+      if(options['execution-config']===undefined){const rootInfo=await stat(runs);if(!rootInfo.isDirectory())throw new Error('--runs must point to a directory');}
+      if(options['execution-config']!==undefined&&!isAbsolute(options['execution-config']))throw new Error('--execution-config must be an absolute manifest filename');
       const portText=options.port??'0';
       if(!/^\d+$/.test(portText)||!Number.isSafeInteger(Number(portText))||Number(portText)>65535)throw new Error('--port must be a decimal integer from 0 to 65535');
       const controller=new AbortController(),cancel=()=>controller.abort();
       process.once('SIGINT',cancel);process.once('SIGTERM',cancel);
       try{
         const {startDashboard}=await import('./dashboard/server.mjs');
-        const dashboard=await startDashboard({runs,port:Number(portText),signal:controller.signal});
-        say(JSON.stringify({event:'listening',url:dashboard.url,readOnly:true}));
+        const dashboard=await startDashboard({runs,port:Number(portText),signal:controller.signal,...(options['execution-config']!==undefined?{executionConfig:options['execution-config']}:{})});
+        say(JSON.stringify({event:'listening',url:dashboard.url,readOnly:!dashboard.executionUrl,...(dashboard.executionUrl?{executionUrl:dashboard.executionUrl}:{})}));
         await dashboard.closed;
         return 0;
       }catch{

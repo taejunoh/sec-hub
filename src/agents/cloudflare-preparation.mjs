@@ -24,7 +24,7 @@ export async function preflightPreparationLocations({preparationFrom,preparation
   return {sourceManifestPath,sourceArtifactRoot,sourceRunRoot,sourceManifestBytes:bytes};
 }
 function optionsIdentity(options,command,args,nativeNodeExecutable,nativeNodeVersion){return {strategy:STRATEGY,command,args,model:options.model,effort:options.effort??'medium',profile:options.profile??'quick',revision:options.revision,skillRoot:resolve(options.skillRoot),workRoot:resolve(options.workRoot),maxAgents:options.maxAgents,nativeNodeExecutable,nativeNodeVersion};}
-export async function inspectCloudflarePreparation({options,target,artifactDir,command,args=[],nativeNodeExecutable=process.execPath,nativeNodeVersion=process.versions.node}){
+export async function inspectCloudflarePreparation({options,target,artifactDir,command,args=[],nativeNodeExecutable=process.execPath,nativeNodeVersion=process.versions.node,verificationOptions={}}){
   const location=await preflightPreparationLocations({preparationFrom:options.preparationFrom,preparationSha256:options.preparationSha256,target,artifactDir,workRoot:options.workRoot}),m=JSON.parse(location.sourceManifestBytes),root=location.sourceArtifactRoot;
   if(m.schema!=='sec-hub.native-agent/v1'||m.id!=='cloudflare'||m.strategy!==STRATEGY||m.source!==SOURCES.cloudflare||m.sourceCommit!==PINS.cloudflare||m.backend!=='codex'||m.mode!=='supervised-official-security-audit-skill'||m.preparation!==undefined)fail('wrong source kind, pin, strategy or recursive preparation');
   const promptVersion=replayPromptVersion(m);
@@ -32,7 +32,7 @@ export async function inspectCloudflarePreparation({options,target,artifactDir,c
   if(m.model!==options.model||m.invocation?.command!==command||!sameInputs(m.invocation.args,args)||m.nativeNodeExecutable!==nativeNodeExecutable||m.nativeNodeVersion!==nativeNodeVersion||!text(m.backendVersion)||resolve(m.runner??'','../..')!==resolve(options.workRoot)||resolve(m.copyTarget??'','../runner')!==resolve(m.runner??''))fail('native configuration or work root differs');
   if(!Array.isArray(m.roles)||stable(m.roles.map(r=>r.role))!==stable(prefixRoles))fail('source must contain exactly four baseline recon roles and one planner; no downstream roles');
   if(m.roles.slice(0,4).some(r=>r.accepted!==true)||m.roles[4].accepted!==false||m.roles[4].failure!==m.reasons[0])fail('source native/host acceptance history differs');
-  const instructions=await verifySourcePin('cloudflare',options);if(!sameInputs(instructions,m.instructions))fail('pinned instruction bytes differ');
+  const instructions=await verifySourcePin('cloudflare',options,verificationOptions);if(!sameInputs(instructions,m.instructions))fail('pinned instruction bytes differ');
   const current=await sourceManifest(target);if(!current.length||!sameInputs(current,m.inputs)||!sameInputs(m.inputs,m.copyBefore)||!sameInputs(m.inputs,m.copyAfter)||!sameInputs(m.inputs,m.originalAfter)||(await assertSafeDirectory(target))!==(await assertSafeDirectory(m.target)))fail('source target, original or copied input hashes differ');
   const files=await sourceManifest(root),fileMap=new Map(files.map(f=>[f.path,f])),buffers=new Map([['execution-manifest.json',location.sourceManifestBytes]]),meta=JSON.parse(await safeRead(join(root,'run-metadata.json')));
   if(meta.profile!==(options.profile??'quick')||meta.budget?.max_agents!==options.maxAgents||meta.budget?.spent!==5||meta.execution_policy!=='sandboxed-source-and-local-only'||meta.run_status!=='incomplete'||meta.incomplete_reason!==m.reasons[0]||meta.target!==m.copyTarget||resolve(meta.repo??'')!==resolve(target)||stable(meta.scope_paths)!==stable(m.inputs.map(i=>i.path))||stable(meta.prior_run_paths)!=='[]')fail('source profile, budget or preparation metadata differs');
@@ -70,7 +70,7 @@ export async function materializeCloudflarePreparation(prepared,artifactDir){
   if(!sameInputs(prepared.receipt.sourceArtifactFiles,await sourceManifest(prepared.receipt.sourceArtifactRoot)))fail('source cohort changed during snapshot creation');
 }
 export async function validateCloudflarePreparation(receipt,ctx,options){
-  const cfg=ctx.config.tools.cloudflare,prepared=await inspectCloudflarePreparation({options,target:ctx.target,artifactDir:ctx.artifactDir,command:cfg.command,args:cfg.args??[],nativeNodeExecutable:ctx.nativeNodeExecutable,nativeNodeVersion:ctx.nativeNodeVersion});
+  const cfg=ctx.config.tools.cloudflare,prepared=await inspectCloudflarePreparation({options,target:ctx.target,artifactDir:ctx.artifactDir,command:cfg.command,args:cfg.args??[],nativeNodeExecutable:ctx.nativeNodeExecutable,nativeNodeVersion:ctx.nativeNodeVersion,verificationOptions:{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true}});
   if(stable(receipt)!==stable(prepared.receipt))fail('trusted preparation receipt differs or was rebound');
   for(const file of receipt.snapshotFiles){const data=await safeRead(resolve(ctx.artifactDir,receipt.snapshotRoot,file.path));if(data.length!==file.size||sha256(data)!==file.sha256||!data.equals(prepared.buffers.get(file.path)))fail('preparation snapshot differs from original native evidence');}
   return prepared;

@@ -6,6 +6,7 @@ import { compareRuns } from '../compare.mjs';
 import { redactValue } from '../redaction.mjs';
 import { loadCatalog } from './catalog.mjs';
 import { RequestPolicyError, validateRequest } from './http-policy.mjs';
+import { createExecutionSession, ExecutionPolicyError, readExecutionJson, validateExecutionRequest } from './execution-policy.mjs';
 
 const RESPONSE_LIMIT = 64 * 1024 * 1024;
 const SECURITY_HEADERS = Object.freeze({
@@ -14,7 +15,7 @@ const SECURITY_HEADERS = Object.freeze({
   'Referrer-Policy': 'no-referrer',
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
 });
-const MIME = Object.freeze({ '/': 'text/html; charset=utf-8', '/assets/app.mjs': 'text/javascript; charset=utf-8', '/assets/style.css': 'text/css; charset=utf-8', '/assets/view-model.mjs': 'text/javascript; charset=utf-8', '/assets/i18n.mjs': 'text/javascript; charset=utf-8' });
+const MIME = Object.freeze({ '/': 'text/html; charset=utf-8', '/assets/app.mjs': 'text/javascript; charset=utf-8', '/assets/style.css': 'text/css; charset=utf-8', '/assets/view-model.mjs': 'text/javascript; charset=utf-8', '/assets/i18n.mjs': 'text/javascript; charset=utf-8', '/assets/execution-view.mjs': 'text/javascript; charset=utf-8' });
 const RUN_STATUSES = new Set(['completed', 'partial', 'failed']);
 const TOOL_STATUSES = new Set(['completed', 'failed', 'skipped', 'timed_out', 'cancelled', 'imported']);
 const SEVERITIES = new Set(['critical', 'high', 'medium', 'low', 'info', 'unknown']);
@@ -55,6 +56,7 @@ async function preloadAssets() {
     ['/assets/style.css', path.join(src, 'web', 'style.css')],
     ['/assets/view-model.mjs', path.join(src, 'web', 'view-model.mjs')],
     ['/assets/i18n.mjs', path.join(src, 'web', 'i18n.mjs')],
+    ['/assets/execution-view.mjs', path.join(src, 'web', 'execution-view.mjs')],
   ]);
   const assets = new Map();
   for (const [route, filename] of files) {
@@ -194,33 +196,116 @@ function send(response, request, result) {
   else response.end(body);
 }
 
-/** Start a loopback-only server over a bounded startup snapshot and preloaded trusted assets. */
-export async function startDashboard({ runs, port = 0, signal } = {}) {
+function explicitRefreshSnapshot(snapshot) {
+  return { ...snapshot, catalog: { ...snapshot.catalog, snapshot: { ...snapshot.catalog.snapshot, refresh: 'explicit' } } };
+}
+function executionPath(request) {
+  return typeof request.url === 'string' && /^\/api\/execution(?:\/|\?|$)/.test(request.url);
+}
+function exactFields(body, fields) {
+  if (Object.keys(body).length !== fields.length || fields.some((field) => !Object.hasOwn(body, field))) throw new ExecutionPolicyError('invalid_request', 400);
+}
+
+/** Start a loopback-only server; execution is enabled only by a trusted manifest filename. */
+export async function startDashboard({ runs, port = 0, signal, executionConfig } = {}) {
   if (typeof runs !== 'string' || !path.isAbsolute(runs)) throw new TypeError('runs must be an absolute directory');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('port must be an integer from 0 through 65535');
   if (signal !== undefined && (typeof signal !== 'object' || typeof signal.addEventListener !== 'function')) throw new TypeError('signal must be an AbortSignal');
   if (signal?.aborted) throw new TypeError('dashboard startup aborted');
-  const { catalog, records } = await loadCatalog(runs);
-  const assets = await preloadAssets();
-  if (signal?.aborted) throw new TypeError('dashboard startup aborted');
+  let jobs;
+  let ExecutionError;
+  let session;
+  if (executionConfig !== undefined) {
+    if (typeof executionConfig !== 'string' || !path.isAbsolute(executionConfig)) throw new TypeError('executionConfig must be an absolute manifest filename');
+    const [{ loadExecutionConfig }, controllerModule] = await Promise.all([import('./execution-config.mjs'), import('./jobs.mjs')]);
+    ExecutionError = controllerModule.ExecutionError;
+    const configuration = await loadExecutionConfig({ filename: executionConfig, runsRoot: runs });
+    jobs = controllerModule.createJobController({ configuration });
+    session = createExecutionSession();
+  }
+  let snapshot;
+  let assets;
+  try {
+    snapshot = await loadCatalog(runs);
+    if (jobs) snapshot = explicitRefreshSnapshot(snapshot);
+    assets = await preloadAssets();
+    if (signal?.aborted) throw new TypeError('dashboard startup aborted');
+  } catch (error) { await jobs?.close(); throw error; }
+  let generation = 0;
+  let closing = false;
   const redactionEnv = { ...process.env };
   const redact = (value) => redactValue(value, redactionEnv);
   const sockets = new Set();
-  const server = createServer((request, response) => {
+  async function routeExecution(request, policy) {
+    const address = server.address();
+    const actualPort = typeof address === 'object' && address ? address.port : port;
+    validateExecutionRequest(request, actualPort, session);
+    if (closing) throw new ExecutionPolicyError('execution_closing', 503);
+    const { pathname } = policy;
+    if (pathname === '/api/execution' && request.method === 'GET') return jsonResponse({ enabled: true, csrfToken: session.csrfToken, ...jobs.describe(), generation });
+    const getMatch = pathname.match(/^\/api\/execution\/jobs\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/);
+    const cancelMatch = pathname.match(/^\/api\/execution\/jobs\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/cancel$/);
+    if (pathname.startsWith('/api/execution/jobs/') && !getMatch && !cancelMatch) throw new ExecutionPolicyError('invalid_request', 400);
+    if (getMatch && request.method === 'GET') return jsonResponse({ job: jobs.get(getMatch[1]) });
+    if (request.method !== 'POST') throw new ExecutionPolicyError('method_not_allowed', 405);
+    if (pathname !== '/api/execution/jobs' && pathname !== '/api/execution/catalog/refresh' && !cancelMatch) throw new ExecutionPolicyError('not_found', 404);
+    const body = await readExecutionJson(request);
+    if (closing) throw new ExecutionPolicyError('execution_closing', 503);
+    if (pathname === '/api/execution/jobs') {
+      exactFields(body, ['targetId', 'toolIds']);
+      return jsonResponse({ job: jobs.start(body) }, 202);
+    }
+    exactFields(body, []);
+    if (cancelMatch) {
+      const job = jobs.cancel(cancelMatch[1]);
+      return jsonResponse({ job }, ['running', 'cancelling'].includes(job.state) ? 202 : 200);
+    }
+    return jobs.withRefresh(async () => {
+      let replacement;
+      try { replacement = explicitRefreshSnapshot(await loadCatalog(runs)); } catch { throw new ExecutionPolicyError('refresh_failed', 500); }
+      const nextGeneration = generation + 1;
+      const catalog = catalogResponse(replacement.catalog, redact);
+      const results = jobs.describe().jobs.filter((job) => job.reportsReady && job.resultRunId).map((job) => {
+        const artifact = replacement.catalog.artifacts.find((entry) => entry.kind === 'run' && entry.state === 'ready' && replacement.records.get(entry.id)?.payload?.id === job.resultRunId);
+        return { jobId: job.id, runId: job.resultRunId, artifactId: artifact?.id ?? null };
+      });
+      // Serialize first: an oversized/unserializable response must retain the prior snapshot.
+      const result = jsonResponse({ catalog, generation: nextGeneration, results });
+      snapshot = replacement;
+      generation = nextGeneration;
+      return result;
+    });
+  }
+  const server = createServer(async (request, response) => {
     let result;
+    const isExecution = Boolean(jobs) && executionPath(request);
     try {
       const address = server.address();
       const actualPort = typeof address === 'object' && address ? address.port : port;
       const policy = validateRequest(request, actualPort);
-      result = routeRequest(request, policy, records, catalog, assets, redact);
+      result = isExecution ? await routeExecution(request, policy) : routeRequest(request, policy, snapshot.records, snapshot.catalog, assets, redact);
     } catch (error) {
-      const code = error instanceof RequestPolicyError ? error.code : error instanceof ResponseError ? error.code : 'internal_error';
-      const status = error instanceof RequestPolicyError ? error.status : error instanceof ResponseError ? error.status : 500;
-      const allow = error.allow ? { Allow: error.allow } : {};
-      try { result = makeResponse(status, 'application/json; charset=utf-8', jsonBuffer(errorBody(code)), allow); }
-      catch { result = makeResponse(500, 'application/json; charset=utf-8', Buffer.from(JSON.stringify(errorBody('internal_error')))); }
+      if (isExecution) {
+        const known = error instanceof ExecutionPolicyError || (ExecutionError && error instanceof ExecutionError);
+        const legacyPolicy = error instanceof RequestPolicyError;
+        const code = known ? error.code : legacyPolicy ? error.code : 'internal_error';
+        const status = known ? error.statusCode : legacyPolicy ? error.status : 500;
+        result = jsonResponse({ error: { code } }, status);
+        if (status === 401) result.extra = { 'WWW-Authenticate': 'Bearer' };
+        request.pause();
+      } else {
+        const code = error instanceof RequestPolicyError ? error.code : error instanceof ResponseError ? error.code : 'internal_error';
+        const status = error instanceof RequestPolicyError ? error.status : error instanceof ResponseError ? error.status : 500;
+        const allow = error.allow ? { Allow: error.allow } : {};
+        try { result = makeResponse(status, 'application/json; charset=utf-8', jsonBuffer(errorBody(code)), allow); }
+        catch { result = makeResponse(500, 'application/json; charset=utf-8', Buffer.from(JSON.stringify(errorBody('internal_error')))); }
+      }
     }
-    send(response, request, result);
+    if (!response.destroyed) {
+      send(response, request, result);
+      // Rejected bodies are never drained. Close once the constant response is flushed.
+      if (isExecution && result.status >= 400) response.once('finish', () => request.socket.destroy());
+    }
   });
   server.headersTimeout = 10_000;
   server.requestTimeout = 10_000;
@@ -231,25 +316,34 @@ export async function startDashboard({ runs, port = 0, signal } = {}) {
   let closedResolve;
   let closedReject;
   let started = false;
+  let runtimeFailure;
   const closed = new Promise((resolve, reject) => { closedResolve = resolve; closedReject = reject; });
   void closed.catch(() => {});
   let closePromise;
   const close = () => {
     if (closePromise) return closePromise;
-    closePromise = new Promise((resolve, reject) => {
-      if (!server.listening) { closedResolve(); resolve(); return; }
-      server.close((error) => {
-        if (error) { reject(error); return; }
-        closedResolve(); resolve();
-      });
+    closing = true;
+    // Calling close synchronously invalidates admission and requests abort before HTTP teardown.
+    const jobClosure = jobs ? jobs.close() : Promise.resolve();
+    const httpClosure = new Promise((resolve, reject) => {
+      if (!server.listening) { resolve(); return; }
+      server.close((error) => error ? reject(error) : resolve());
       server.closeIdleConnections?.();
       for (const socket of sockets) socket.destroy();
     });
+    closePromise = (async () => {
+      const outcomes = await Promise.allSettled([jobClosure, httpClosure]);
+      const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
+      if (rejected) throw rejected.reason;
+      if (runtimeFailure) throw runtimeFailure;
+    })();
+    void closePromise.then(closedResolve, closedReject);
+    void closePromise.catch(() => {});
     return closePromise;
   };
   server.on('error', () => {
     if (!started) return;
-    closedReject(new Error('Dashboard server failed'));
+    runtimeFailure = new Error('Dashboard server failed');
     void close().catch(() => {});
   });
   let abortHandler;
@@ -263,7 +357,7 @@ export async function startDashboard({ runs, port = 0, signal } = {}) {
     });
     started = true;
     if (signal) {
-      abortHandler = () => { void close(); };
+      abortHandler = () => { void close().catch(() => {}); };
       signal.addEventListener('abort', abortHandler, { once: true });
       if (signal.aborted) {
         signal.removeEventListener('abort', abortHandler);
@@ -271,15 +365,18 @@ export async function startDashboard({ runs, port = 0, signal } = {}) {
         throw new TypeError('dashboard startup aborted');
       }
     }
-  } catch (error) {
-    if (server.listening) server.close();
-    throw error;
-  }
+  } catch (error) { await close().catch(() => {}); throw error; }
   const actualPort = server.address().port;
   const url = `http://127.0.0.1:${actualPort}/`;
   return {
     url,
-    close: async () => { if (abortHandler) signal.removeEventListener('abort', abortHandler); await close(); },
+    ...(session ? { executionUrl: `${url}#session=${session.token}` } : {}),
+    close: async () => {
+      if (abortHandler) signal.removeEventListener('abort', abortHandler);
+      // Preserve the legacy readonly public-close behavior after listener failure.
+      if (!jobs && runtimeFailure) { await close().catch(() => {}); return; }
+      await close();
+    },
     closed,
   };
 }

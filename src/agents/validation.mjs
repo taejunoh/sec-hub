@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { assertSafeDirectory } from '../safe-io.mjs';
+import { runProcess } from '../processes.mjs';
 const execute=promisify(execFile);
 const prevalidated=new Map();
 export const PINS={cloudflare:'c1c8a8c1471069fb0e188eeaff69b8e8db6564a8',anthropic:'d3bea6b5793b5f3d59a75ebe69a58efa88383145'};
@@ -188,11 +189,19 @@ export function parseAnthropicDocument(doc,{copyTarget,inputs,artifactDir}){
   });
   if(Object.keys(counts).some(k=>doc.summary[k]!==counts[k]))throw new Error('Anthropic native summary counts disagree');return findings;
 }
-export async function verifySourcePin(id,options,{signal}={}){
+// Parent-side verification owns separate children and must join tree cleanup.
+// Wrapper-side callers keep execFile children inside their already-owned group.
+async function verificationProcess(command,args,{superviseProcesses=false,onCleanupUnconfirmed,...options}){
+  if(!superviseProcesses)return execute(command,args,options);
+  const result=await runProcess({command,args},{timeoutMs:options.timeout,maxOutputBytes:options.maxBuffer,signal:options.signal,env:options.env??process.env,redactOutput:false,onCleanupUnconfirmed});
+  if(result.status!=='completed')throw Object.assign(new Error('Native verification process failed'),{code:result.exitCode??1,stdout:result.stdout,stderr:result.stderr});
+  return result;
+}
+export async function verifySourcePin(id,options,{signal,onCleanupUnconfirmed,superviseProcesses=false}={}){
   signal?.throwIfAborted();
   if(options.revision!==PINS[id])throw new Error('Unsupported official source pin');
   const root=await assertSafeDirectory(options.skillRoot);
-  const git=async args=>{signal?.throwIfAborted();const result=await execute('git',['--no-replace-objects','--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null','-C',root,...args],{timeout:10000,maxBuffer:2*1024*1024,signal,env:{PATH:process.env.PATH,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1'}});signal?.throwIfAborted();return result.stdout;};
+  const git=async args=>{signal?.throwIfAborted();const result=await verificationProcess('git',['--no-replace-objects','--no-optional-locks','-c','core.fsmonitor=false','-c','core.hooksPath=/dev/null','-C',root,...args],{timeout:superviseProcesses?3000:10000,maxBuffer:superviseProcesses?128*1024:2*1024*1024,signal,onCleanupUnconfirmed,superviseProcesses,env:{PATH:process.env.PATH,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'/dev/null',GIT_NO_REPLACE_OBJECTS:'1'}});signal?.throwIfAborted();return result.stdout;};
   if((await git(['rev-parse','--show-toplevel'])).trim()!==root||(await git(['rev-parse','HEAD'])).trim()!==PINS[id])throw new Error('Official source checkout must match pinned revision');
   if((await git(['for-each-ref','--format=%(refname)','refs/replace/'])).trim())throw new Error('Official source replacement refs are unsupported');
   const tree=await git(['ls-tree','-r','-z','--full-tree',PINS[id]]),tracked=new Map(),directories=new Set();
@@ -229,11 +238,11 @@ export async function verifySourcePin(id,options,{signal}={}){
   if(id==='anthropic'){const settings=JSON.parse(files.get('.claude/settings.json').toString());if(JSON.stringify(settings)!==JSON.stringify({env:{ANTHROPIC_CUSTOM_HEADERS:'anthropic-cyber-runbook: skills'}}))throw new Error('Unsupported pinned project settings');}
   return instructions.sort((a,b)=>a.path.localeCompare(b.path));
 }
-export async function runOfficialValidators(options,artifactDir,{signal}={}){
-  signal?.throwIfAborted();await verifySourcePin('cloudflare',options,{signal});signal?.throwIfAborted();
+export async function runOfficialValidators(options,artifactDir,{signal,onCleanupUnconfirmed,superviseProcesses=false}={}){
+  signal?.throwIfAborted();await verifySourcePin('cloudflare',options,{signal,onCleanupUnconfirmed,superviseProcesses});signal?.throwIfAborted();
   const results=[];for(const [script,file] of [['validate-findings.cjs','findings.json'],['validate-coverage-ledger.cjs','coverage-ledger.json']]){
     signal?.throwIfAborted();
-    try{const result=await execute(process.execPath,[join(options.skillRoot,'skills/security-audit',script),join(artifactDir,file)],{timeout:10000,maxBuffer:256*1024,signal});results.push({script,exitCode:0,stdout:result.stdout.trim()});}catch(error){signal?.throwIfAborted();results.push({script,exitCode:typeof error.code==='number'?error.code:1,stderr:String(error.stderr??'validator failed').slice(0,10000)});}
+    try{const result=await verificationProcess(process.execPath,[join(options.skillRoot,'skills/security-audit',script),join(artifactDir,file)],{timeout:10000,maxBuffer:256*1024,signal,onCleanupUnconfirmed,superviseProcesses});signal?.throwIfAborted();results.push({script,exitCode:0,stdout:result.stdout.trim()});}catch(error){signal?.throwIfAborted();results.push({script,exitCode:typeof error.code==='number'?error.code:1,stderr:String(error.stderr??'validator failed').slice(0,10000)});}
   }return results;
 }
 export async function finalizeNativeExecution(id,ctx){
@@ -261,7 +270,7 @@ export async function validateNativeExecution(id,ctx){
   if(!text(manifest.nativeNodeExecutable)||!isAbsolute(manifest.nativeNodeExecutable)||/[\x00-\x1f\x7f]/.test(manifest.nativeNodeExecutable)||!/^\d+\.\d+\.\d+/.test(manifest.nativeNodeVersion??'')||Number.parseInt(manifest.nativeNodeVersion)<22)throw new Error(`${id}: missing or invalid native Node runtime evidence`);
   const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs);
   if(manifest.invocation.cwd!==(id==='cloudflare'?runner:options.skillRoot)||!sameInputs(manifest.invocation.args,[...(ctx.config.tools[id].args??[]),...expectedArgs])||(id==='cloudflare'&&manifest.promptSha256!==sha256(cloudflarePrompt(manifest.copyTarget,join(runner,'audit'),options))))throw new Error(`${id}: native invocation does not match trusted policy`);
-  const instructions=await verifySourcePin(id,options);if(!sameInputs(instructions,manifest.instructions))throw new Error(`${id}: official instruction hashes differ`);
+  const instructions=await verifySourcePin(id,options,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true});if(!sameInputs(instructions,manifest.instructions))throw new Error(`${id}: official instruction hashes differ`);
   const current=await sourceManifest(ctx.target);if(!sameInputs(current,manifest.inputs)||!sameInputs(manifest.inputs,manifest.copyBefore)||!sameInputs(manifest.inputs,manifest.copyAfter)||!sameInputs(manifest.inputs,manifest.originalAfter))throw new Error(`${id}: source preservation failed`);
   const events=(await safeRead(join(ctx.artifactDir,'native-events.jsonl'))).toString().split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));
   const native=inspectNativeEvents(id,events,{...options,copyTarget:manifest.copyTarget,exitCode:manifest.process?.exitCode});const retainedHashes={};
@@ -276,7 +285,7 @@ export async function validateNativeExecution(id,ctx){
   const sealed=manifest.finalRetainedHashes??manifest.preRedactionHashes;if(!sealed||Object.entries(retainedHashes).some(([name,hash])=>sealed[name]!==hash))throw new Error(`${id}: retained native evidence hashes differ`);
   let findings=[],validators=[];const reasons=[...native.reasons];
   if(id==='cloudflare'){
-    validators=await runOfficialValidators(options,ctx.artifactDir);if(validators.some(x=>x.exitCode!==0))reasons.push('Official native validator failed');
+    validators=await runOfficialValidators(options,ctx.artifactDir,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true});if(validators.some(x=>x.exitCode!==0))reasons.push('Official native validator failed');
     const metadata=JSON.parse((await safeRead(join(ctx.artifactDir,'run-metadata.json'))).toString());if(metadata.run_status!=='complete'||metadata.profile!=='quick')reasons.push('Official audit run is incomplete');
     const doc=JSON.parse((await safeRead(join(ctx.artifactDir,'findings.json'))).toString());
     if(validators.every(x=>x.exitCode===0)&&Array.isArray(doc)){native.independentRecords=verifyCloudflareRecords(doc,events,native);findings=doc.filter(f=>f.verdict!=='rejected').map(f=>{const loc=f.trace[0],input=manifest.inputs.find(x=>x.path===loc.file);if(!input||loc.line>input.lines)throw new Error('Cloudflare invalid finding location');if(f.verdict==='confirmed')reasons.push('Source-only workflow cannot retain dynamic confirmation');return {toolId:id,ruleId:f.fingerprint,title:f.title,description:f.description,severity:f.verdict==='needs_validation'?'unknown':f.severity.overall_severity==='informational'?'info':f.severity.overall_severity,verification:'candidate',location:{path:loc.file,line:loc.line},evidence:{native:f,dynamicVerification:'not-performed'},rawRef:join(ctx.artifactDir,'findings.json')};});}

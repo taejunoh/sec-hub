@@ -12,14 +12,15 @@ export function runProcess(spec, options={}) {
   if(!Number.isFinite(timeoutMs)||timeoutMs<=0||!Number.isSafeInteger(maxOutputBytes)||maxOutputBytes<1)return Promise.reject(new Error('Positive timeout and output limit are required'));
   return new Promise(resolveResult=>{
     const started=Date.now();
-    let child,timer,escalation,hardDeadline,bytes=0,outputLimitExceeded=false,state,reason,settled=false,closed=false,stopping=false,escalated=false,exitCode=null;
+    let child,timer,escalation,hardDeadline,cleanupUnconfirmed=false,bytes=0,outputLimitExceeded=false,state,reason,settled=false,closed=false,stopping=false,escalated=false,exitCode=null;
     const stdout=[],stderr=[];
     const settle=()=>{
       if(settled)return;
       settled=true;clearTimeout(timer);clearTimeout(escalation);clearTimeout(hardDeadline);
       signal?.removeEventListener('abort',cancel);
       const allowed=[...(spec.successCodes??[0]),...(spec.findingCodes??[])];
-      resolveResult({status:state??(allowed.includes(exitCode)?'completed':'failed'),stdout:outputLimitExceeded?'':redact(Buffer.concat(stdout).toString('utf8')),stderr:outputLimitExceeded?'':redact(Buffer.concat(stderr).toString('utf8')),exitCode,reason:reason??(!allowed.includes(exitCode)?`Process exited with ${exitCode===null?'a signal':`code ${exitCode}`}`:undefined),durationMs:Date.now()-started});
+      if(cleanupUnconfirmed){try{Promise.resolve(options.onCleanupUnconfirmed?.()).catch(()=>{});}catch{}}
+      resolveResult({...(cleanupUnconfirmed?{cleanupUnconfirmed:true}:{}),status:state??(allowed.includes(exitCode)?'completed':'failed'),stdout:outputLimitExceeded?'':redact(Buffer.concat(stdout).toString('utf8')),stderr:outputLimitExceeded?'':redact(Buffer.concat(stderr).toString('utf8')),exitCode,reason:reason??(!allowed.includes(exitCode)?`Process exited with ${exitCode===null?'a signal':`code ${exitCode}`}`:undefined),durationMs:Date.now()-started});
     };
     const finishWhenClean=()=>{if(closed&&(!stopping||escalated))settle();};
     const kill=kind=>{
@@ -30,7 +31,7 @@ export function runProcess(spec, options={}) {
       stopping=true;state=status;reason=message;clearTimeout(timer);
       if(process.platform==='win32'){
         let treeKiller,cleanupDone=false;
-        const cleanupFailed=detail=>{reason=`${message}; Windows process-tree cleanup ${detail}; termination of descendants not confirmed`;};
+        const cleanupFailed=detail=>{cleanupUnconfirmed=true;reason=`${message}; Windows process-tree cleanup ${detail}; termination of descendants not confirmed`;};
         const completed=detail=>{
           if(cleanupDone||settled)return;
           cleanupDone=true;escalated=true;
@@ -60,6 +61,7 @@ export function runProcess(spec, options={}) {
       // Keep this referenced timer alive and wait for KILL before resolving.
       escalation=setTimeout(()=>{kill('SIGKILL');escalated=true;finishWhenClean();},300);
       hardDeadline=setTimeout(()=>{
+        cleanupUnconfirmed=true;reason=`${message}; process-tree cleanup deadline exceeded; termination of descendants not confirmed`;
         kill('SIGKILL');child?.stdout?.destroy();child?.stderr?.destroy();child?.unref();settle();
       },1000);
     };

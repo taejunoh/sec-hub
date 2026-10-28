@@ -95,7 +95,7 @@ async function probe(ctx, id, defaultCommand) {
   }
   try {
     const selected = executable(ctx, id, defaultCommand);
-    const result = await runProcess({ command: selected.command, args: [...selected.args, '--version'], successCodes: [0] }, { timeoutMs: ctx.probeTimeoutMs ?? 10000, maxOutputBytes: 64 * 1024, signal: ctx.signal });
+    const result = await runProcess({ command: selected.command, args: [...selected.args, '--version'], successCodes: [0] }, { timeoutMs: ctx.probeTimeoutMs ?? 10000, maxOutputBytes: 64 * 1024, signal: ctx.signal, onCleanupUnconfirmed: ctx.onCleanupUnconfirmed });
     if (result.status !== 'completed') {
       const reason = result.status === 'timed_out' ? 'Executable version probe timed out.' : result.status === 'cancelled' ? 'Executable version probe cancelled.' : result.reason?.includes('ENOENT') ? 'Executable not found; install the official tool or configure its executable.' : 'Executable version probe failed.';
       return { available: false, reason };

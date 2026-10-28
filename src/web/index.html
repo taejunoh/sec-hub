@@ -12,13 +12,26 @@
   <a class="skip-link" href="#main" data-i18n="본문으로 건너뛰기">본문으로 건너뛰기</a>
   <header class="masthead">
     <div class="brand"><span class="brand-mark" aria-hidden="true">SH</span><div><p class="eyebrow">LOCAL SECURITY WORKBENCH</p><h1>SEC HUB <span>/</span> <span data-i18n="개발자 워크벤치">개발자 워크벤치</span></h1></div></div>
-    <div class="mast-meta"><label class="language-control"><span data-i18n="화면 언어">화면 언어</span><select id="language-select" aria-label="화면 언어" data-i18n-aria="화면 언어"><option value="ko">KO</option><option value="en">English</option></select></label><span class="seal" data-i18n="읽기 전용">읽기 전용</span><span id="snapshot-state">시작 스냅샷 대기</span></div>
+    <div class="mast-meta"><label class="language-control"><span data-i18n="화면 언어">화면 언어</span><select id="language-select" aria-label="화면 언어" data-i18n-aria="화면 언어"><option value="ko">KO</option><option value="en">English</option></select></label><span id="execution-seal" class="seal" data-i18n="읽기 전용">읽기 전용</span><span id="snapshot-state">시작 스냅샷 대기</span></div>
   </header>
   <main id="main">
-    <div class="intro"><p data-i18n="저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.">저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.</p><p class="refresh-note" data-i18n="새 파일을 반영하려면 서버를 다시 시작하세요.">새 파일을 반영하려면 서버를 다시 시작하세요.</p></div>
+    <div class="intro"><p data-i18n="저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.">저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.</p><p id="refresh-note" class="refresh-note" data-i18n="새 파일을 반영하려면 서버를 다시 시작하세요.">새 파일을 반영하려면 서버를 다시 시작하세요.</p></div>
     <p id="live-status" class="live-status" role="status" aria-live="polite">화면을 준비하고 있습니다.</p>
     <div class="desk" data-reading="list">
       <aside class="catalog panel" aria-labelledby="catalog-title">
+        <details id="execution-panel" class="execution-panel" hidden open>
+          <summary data-i18n="새 검사">새 검사</summary>
+          <div class="execution-body">
+            <p class="execution-scope" data-i18n="실행 대상은 운영자가 승인한 범위입니다.">실행 대상은 운영자가 승인한 범위입니다.</p>
+            <label class="execution-target-label"><span data-i18n="검사 대상">검사 대상</span><select id="execution-target" disabled aria-label="검사 대상" data-i18n-aria="검사 대상"></select></label>
+            <fieldset class="execution-toolset" disabled id="execution-toolset"><legend data-i18n="실행 도구">실행 도구</legend><div id="execution-tools"></div></fieldset>
+            <div class="execution-actions"><button id="execution-start" class="primary-button" type="button" disabled data-i18n="검사 시작">검사 시작</button><button id="execution-cancel" class="quiet-button" type="button" disabled hidden data-i18n="실행 취소">실행 취소</button></div>
+            <p id="execution-status" class="execution-status" role="status" aria-live="polite"></p>
+            <div id="execution-progress" class="execution-progress" hidden><span id="execution-job-target"></span><strong id="execution-phase"></strong><span id="execution-count"></span><p id="execution-coverage"></p><ul id="execution-tool-status" aria-label="도구 상태" data-i18n-aria="도구 상태"></ul></div>
+            <p id="execution-quota" class="notice" hidden></p>
+            <button id="execution-refresh" class="quiet-button execution-refresh" type="button" disabled hidden data-i18n="결과 반영 및 열기">결과 반영 및 열기</button>
+          </div>
+        </details>
         <div class="section-heading"><div><p class="eyebrow">INDEX / SNAPSHOT</p><h2 id="catalog-title" data-i18n="자료 목록">자료 목록</h2></div><button id="reload" class="quiet-button" type="button" data-i18n="다시 불러오기">다시 불러오기</button></div>
         <p id="catalog-counts" class="count-line">불러오는 중…</p>
         <p id="truncation" class="notice" hidden></p>
@@ -56,6 +69,6 @@
     </div>
     <noscript><p class="noscript" data-i18n="이 자료 화면을 사용하려면 브라우저에서 JavaScript를 켜세요.">이 자료 화면을 사용하려면 브라우저에서 JavaScript를 켜세요.</p></noscript>
   </main>
-  <footer><span>SEC HUB · LOCAL WORKBENCH</span><span data-i18n="고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다">고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다</span></footer>
+  <footer><span>SEC HUB · LOCAL WORKBENCH</span><span id="snapshot-note" data-i18n="고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다">고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다</span></footer>
 </body>
 </html>

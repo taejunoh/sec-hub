@@ -18,14 +18,22 @@ export async function prepareRunDirectory(out) {
   return directory;
 }
 
-async function targetDetails(target) {
-  const path=await realpath(resolve(target));if(!(await stat(path)).isDirectory())throw new Error('Target must be a local directory');
+function checkCancelled(signal) { if(signal?.aborted)throw new Error('Scan cancelled during preparation'); }
+function observe(callback,value) { try{Promise.resolve(callback?.(value)).catch(()=>{});}catch{} }
+
+async function targetDetails(target,signal,onCleanupUnconfirmed) {
+  checkCancelled(signal);
+  const path=await realpath(resolve(target));checkCancelled(signal);
+  if(!(await stat(path)).isDirectory())throw new Error('Target must be a local directory');
+  checkCancelled(signal);
   const info={path};
   // These read-only plumbing commands do not invoke repository scripts or hooks.
-  const gitOptions={timeoutMs:3000,maxOutputBytes:128*1024};
+  const gitOptions={timeoutMs:3000,maxOutputBytes:128*1024,signal,onCleanupUnconfirmed};
   const revision=await runProcess({command:'git',args:['--no-optional-locks','-C',path,'rev-parse','--verify','HEAD'],successCodes:[0]},gitOptions);
+  checkCancelled(signal);
   if(revision.status==='completed'&&/^[a-f0-9]{40,64}$/.test(revision.stdout.trim()))info.revision=revision.stdout.trim();
   const dirty=await runProcess({command:'git',args:['--no-optional-locks','-C',path,'-c','core.fsmonitor=false','status','--porcelain','--untracked-files=normal'],successCodes:[0]},gitOptions);
+  checkCancelled(signal);
   if(dirty.status==='completed')info.dirty=Boolean(dirty.stdout.trim());
   return info;
 }
@@ -86,33 +94,46 @@ async function preflightNativeLocations(target,out,agents,config) {
 
 export async function runScan(options) {
   const {ai=false,url,config={tools:{}},timeoutMs=120000,signal}=options;
+  const onCleanupUnconfirmed=()=>observe(options.onCleanupUnconfirmed);
+  checkCancelled(signal);
   if(url){let parsed;try{parsed=new URL(url);}catch{throw new Error('URL must be explicit HTTP(S)');}if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw new Error('URL must be HTTP(S) without embedded credentials');}
   const available=options.adapters??(await import('./adapters/index.mjs')).adapters;
   const selected=new Set(options.tools??(ai?available.filter(x=>x.kind!=='agent'&&(x.id!=='php2shell'||url)).map(x=>x.id):['osv','skillspector',...(url?['php2shell']:[])]));
   for(const id of selected)if(!available.some(adapter=>adapter.id===id))throw new Error(`Unknown tool: ${id}`);
   for(const id of Object.keys(config.tools??{}))if(!available.some(adapter=>adapter.id===id))throw new Error(`Unknown configured tool: ${id}`);
-  const target=await targetDetails(options.target),requestedOut=runDirectoryPath(options.out);
+  let completedCount=0;
+  const progress=(phase,toolId,toolStatus)=>observe(options.onProgress,{phase,...(toolId?{toolId,toolStatus}:{}),completedCount,totalCount:selected.size});
+  const finished=record=>{completedCount++;progress('scanning',record.id,record.status);};
+  progress('preparing');
+  const target=await targetDetails(options.target,signal,onCleanupUnconfirmed),requestedOut=runDirectoryPath(options.out);
+  checkCancelled(signal);
   const nativeSelected=available.filter(adapter=>adapter.kind==='agent'&&selected.has(adapter.id));
   if(nativeSelected.length)await preflightNativeLocations(target.path,requestedOut,nativeSelected,config);
+  checkCancelled(signal);
   const directory=await prepareRunDirectory(requestedOut);
+  checkCancelled(signal);
   const redact=createRedactor();
   const sanitize=value=>redactValue(value);
   const run={schemaVersion:1,id:randomUUID(),startedAt:new Date().toISOString(),target,status:'failed',tools:[],findings:[]};
   for(const adapter of available){
     const record={id:adapter.id,name:adapter.name,source:adapter.source,selected:selected.has(adapter.id),status:'skipped',findings:[]};run.tools.push(record);
     if(!selected.has(adapter.id)){record.reason='Not selected';continue;}
-    if(adapter.requiresAI&&!ai){record.reason='Requires explicit --ai consent';continue;}
-    if(adapter.kind==='agent'&&!config.tools?.[adapter.id]){record.reason='Requires explicit executable configuration';continue;}
-    if(signal?.aborted){record.status='cancelled';record.reason='Cancelled by user';continue;}
+    if(adapter.requiresAI&&!ai){record.reason='Requires explicit --ai consent';finished(record);continue;}
+    if(adapter.kind==='agent'&&!config.tools?.[adapter.id]){record.reason='Requires explicit executable configuration';finished(record);continue;}
+    if(signal?.aborted){record.status='cancelled';record.reason='Cancelled by user';finished(record);continue;}
     const artifactDir=join(directory,'raw',adapter.id);await ensureSafeDirectory(artifactDir);
-    const ctx={target:target.path,url,ai,config,artifactDir,signal};
+    const ctx={target:target.path,url,ai,config,artifactDir,signal,onCleanupUnconfirmed};
     let executionContext;
     try {
+      if(signal?.aborted){record.status='cancelled';record.reason='Cancelled during artifact preparation';continue;}
+      progress('checking',adapter.id,'checking');
       const check=await adapter.check(ctx);if(check.version)record.version=redact(check.version);
       if(signal?.aborted){record.status='cancelled';record.reason='Cancelled by user during prerequisite check';continue;}
       if(!check.available){record.reason=redact(check.reason??'Prerequisite unavailable');continue;}
       record.startedAt=new Date().toISOString();
-      const result=await runProcess(await adapter.build(ctx),{timeoutMs,signal,redactOutput:false});
+      const spec=await adapter.build(ctx);
+      progress('scanning',adapter.id,'scanning');
+      const result=await runProcess(spec,{timeoutMs,signal,redactOutput:false,onCleanupUnconfirmed});
       Object.assign(record,{status:result.status,exitCode:result.exitCode,durationMs:result.durationMs,endedAt:new Date().toISOString()});
       if(result.reason)record.reason=redact(result.reason);
       record.artifacts={stdout:join(artifactDir,'stdout.txt'),stderr:join(artifactDir,'stderr.txt')};
@@ -157,12 +178,14 @@ export async function runScan(options) {
           record.execution=sanitize(execution);
         }
       }catch(error){record.status='failed';record.reason=redact(error.message);}
+      finished(record);
     }
   }
   const requested=run.tools.filter(tool=>selected.has(tool.id));
   const successful=requested.filter(tool=>tool.status==='completed').length;
   run.status=successful===requested.length&&successful>0?'completed':successful>0||run.findings.length>0?'partial':'failed';
   run.endedAt=new Date().toISOString();
+  progress('reporting');
   await atomicWriteFile(join(directory,'run.json'),JSON.stringify(run,null,2)+'\n',{mode:0o600});
   Object.defineProperty(run,'directory',{value:directory,enumerable:false});
   return run;

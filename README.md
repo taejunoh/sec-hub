@@ -87,6 +87,26 @@ node bin/sec-hub.mjs serve --runs /absolute/path/to/sec-hub-runs
 
 실행 완료는 “안전 확인”이나 취약점 부재를 뜻하지 않습니다. 가져온 결과는 “가져온 결과 · 로컬 실행 아님”으로, 저장된 비교는 “저장된 비교 · 원본 검사 재검증 안 함”으로 표시합니다. 후보 결과를 확정 결과로 승격하지 않고, `resolved`도 수정 확인으로 표현하지 않습니다. 브라우저의 비교는 기존 비교 엔진을 메모리에서 실행하며 `comparison.json`이나 HTML 보고서를 쓰지 않습니다. 비교 게이트 0은 완전한 비교에서 선택한 기준을 통과, 1은 완전한 비교에서 위반, 2는 불완전하거나 판단할 수 없음을 나타냅니다. 게이트 결과는 응답 데이터이며 서버 종료 코드에는 영향을 주지 않습니다. Ctrl+C 또는 SIGTERM으로 서버를 종료합니다.
 
+## 명시적 웹 검사 실행
+
+웹 실행은 기본적으로 꺼져 있습니다. `--execution-config`를 생략하면 현재처럼 저장된 결과만 읽는 대시보드로 시작하며, 실행 API도 사용할 수 없습니다. 검사를 허용하려면 운영자가 별도 manifest와 scanner 설정 파일을 만들고 두 경로를 절대 경로로 지정합니다.
+
+```sh
+node bin/sec-hub.mjs serve \
+  --runs /absolute/path/to/sec-hub-runs \
+  --execution-config /absolute/path/to/web-execution.config.json
+```
+
+Manifest 형식은 [web-execution.config.json](examples/web-execution.config.json)을 참고하세요. 각 target은 표시 이름, 절대 대상 경로, 기존 Sec Hub scanner 설정 파일, 허용할 도구 ID와 선택 제한을 지정합니다. 허용 도구는 비어 있지 않고 중복이 없어야 하며, 브라우저에서는 이 목록의 부분집합만 선택할 수 있습니다. `ai`는 기본 `false`이며, AI 도구를 승인하려면 운영자가 해당 target에 `true`를 명시해야 합니다. `anthropic` 웹 실행은 지원되지 않습니다. PHP2Shell을 쓸 때 검사 URL도 manifest의 target에 고정해 두며 브라우저에서 URL을 입력할 수 없습니다.
+
+실행 모드는 신뢰하는 로컬 운영자를 위한 것입니다. manifest와 scanner 설정은 시작 시 검증되고, 경로나 설정을 바꾸려면 서버를 재시작해야 합니다. 브라우저는 명령, 경로, 설정, 환경 변수, timeout 또는 AI 동의를 바꿀 수 없습니다. 서버가 출력하는 loopback 실행 URL에는 그 서버 세션 동안만 유효한 비밀 토큰이 들어갑니다. 그 URL을 공유하거나 로그·스크린샷·증거에 복사하지 마세요. 서버를 다시 시작하면 새 세션 URL을 사용해야 합니다.
+
+한 번에 하나의 검사만 실행되며 대기열은 없습니다. 서버 세션당 최대 20건을 시작할 수 있습니다. 화면의 작업 상태(`running`, `cancelling`, `cancelled`, `completed`, `failed`)는 검사 결과의 `runStatus`(`completed`, `partial`, `failed`)와 별개입니다. 예를 들어 작업이 `completed`여도 선택한 도구 범위가 부분적이거나 finding이 있을 수 있습니다. 진행 표시에는 단계와 완료된 도구 수가 나오며 예상 백분율은 표시하지 않습니다.
+
+보고서 쓰기가 끝난 뒤 **결과 반영 / Refresh results**를 직접 선택해야 새 실행을 목록에 반영하고 열 수 있습니다. 자동 갱신은 하지 않습니다. 새 결과가 대시보드의 catalog 제한에 걸리면 결과 링크가 없다고 명시합니다. 실행 취소는 owned process cleanup이 확인될 때까지 `cancelling`으로 표시됩니다. 실행이 꺼진 read-only 모드에서 실행 패널은 표시되지 않습니다.
+
+같은 OS 사용자 권한으로 실행되는 scanner, 설정, Git 및 대상 파일은 신뢰해야 합니다. 이 기능은 같은 사용자의 다른 프로세스와 경로 경쟁을 막는 OS 격리나 적대적 코드 샌드박스가 아닙니다. Windows의 안전 파일 쓰기 정책은 fail closed 상태를 유지하므로 Windows에서 검사 보고서 저장은 지원되지 않습니다. 실행·취소·결과 반영의 검증 범위와 남은 릴리스 게이트는 [웹 실행 보고서](verification/web-execution/REPORT.md)를 참고하세요.
+
 브리지 가이드와 import 계약 내보내기, 결과 가져오기:
 
 ```sh
