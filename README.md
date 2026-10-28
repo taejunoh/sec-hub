@@ -1,10 +1,12 @@
 # Sec Hub
 
+> 0.2.3에는 Windows 하위 프로세스 종료 경계 #31, trusted ancestor 경계 #40, Darwin ACL reader native helper가 포함됩니다. Anthropic workflow는 보류합니다. [0.2.3 릴리스 보고서](verification/release-0.2.3/REPORT.md).
+
 > 0.2.2는 Open Code Review 0.2.1 재검사의 고위험 #9·#12와 중간 심각도 19건을 수정한 안정화 버전입니다. 중간 후보 #13은 기존 pinned 공식 검증기가 이미 차단해 반증됐습니다. 새 테스트 57개를 포함해 Node 24 전체 **385/385 통과**, 명세·독립 품질 검토도 통과했습니다. [0.2.2 패키지](releases/sec-hub-local-0.2.2.tgz), [22건 판정·수정·실행 검증 보고서](verification/release-0.2.2/REPORT.md), [전체 테스트 로그](verification/release-0.2.2/evidence/full-suite-node24.log)를 확인하세요.
 
 기존 0.2.2 release archive는 이전 source checkout의 고위험 #38(가림 실패 후 원문 잔존)·#41(POSIX 경로 검증 우회) 수정과 검증을 포함합니다. 0.2.1 배포 파일과 44개 native 후보의 [원본 재검사 기록](verification/ocr-0.2.1-assessment/REPORT.md), [이전 두 수정 기록](verification/high2-remediation/REPORT.md)은 보존되어 있습니다. 0.2.2 archive는 그대로이며 #31/#40 후속 수정은 그 패키지에 포함되지 않습니다.
 
-현재 source checkout에는 Windows 하위 프로세스 종료 #31과 ancestor 교체 경계 #40의 로컬 수정이 있습니다. Node 24 전체 suite는 424개 중 423 pass, 0 fail, 1 native Windows skip으로 통과했습니다. Anthropic은 계속 보류합니다. #31의 `taskkill /T /F`는 Darwin에서 OS 경계 모의로 확인했으며 실제 Windows 실행은 검증하지 않았습니다. #40은 root와 현재 effective UID를 trusted ancestor로 간주하는 권한 정책을 강제하며, 같은 UID의 악의적 process가 일으키는 directory-swap은 여전히 범위 밖입니다. [#31/#40 로컬 수정·검증 보고서](verification/high31-40-remediation/REPORT.md).
+메타데이터 버전 변경 전 #31/#40 런타임 회귀 검증에서 Node 24 전체 suite는 424개 중 423 pass, 0 fail, 1 native Windows skip으로 통과했습니다. 이 결과는 0.2.3 메타데이터 변경 후 전체 suite를 다시 실행한 결과가 아닙니다. #31의 `taskkill /T /F`는 Darwin에서 OS 경계 모의로 확인했으며 실제 Windows 실행은 검증하지 않았습니다. #40은 root와 현재 effective UID를 trusted ancestor로 간주하는 권한 정책을 강제하며, 같은 UID의 악의적 process가 일으키는 directory-swap은 여전히 범위 밖입니다. [#31/#40 로컬 수정·검증 보고서](verification/high31-40-remediation/REPORT.md).
 
 이 보안 경계에는 배포 영향이 있습니다. Windows에서는 safe filesystem helper가 필요한 report write뿐 아니라 source/skill-root read도 fail closed합니다. macOS에서는 shared writable ancestor(고정 sticky `/tmp` 포함)와 ALLOW/unknown ACL을 거부하고, ancestor별 ACL 확인이 startup·source 검사·보고서 저장 시간을 늘립니다. Linux의 mode/sticky 정책은 native Linux에서 실행 검증하지 않았습니다. Darwin ACL helper는 macOS arm64에서 실행했고 universal x86_64 slice는 별도로 native 실행하지 않았습니다.
 
@@ -24,7 +26,7 @@ node bin/sec-hub.mjs --help
 
 `npm install`은 런타임 의존성을 추가하지 않습니다. 전역 명령이 필요하면 선택적으로 `npm link`를 실행할 수 있습니다. 기본 사용은 `node bin/sec-hub.mjs`입니다.
 
-현재 checkout에서 생성하는 npm 패키지에는 CLI, 런타임, 예시와 README가 포함됩니다. 저장소의 `scripts/` 유지 관리 도구는 설치 패키지에서 제외됩니다. `src/native/` 아래 Darwin ACL reader binary, C source와 maintainer build script는 포함되며, build script는 provenance/rebuild 용도이고 CLI runtime에서 실행하거나 컴파일러를 호출하지 않습니다. 기존 0.2.2 release archive는 이 후속 helper를 포함하지 않습니다. 실행 증거는 저장소의 `verification/`에 남습니다.
+0.2.3 패키지에는 CLI, 런타임, 예시와 README가 포함됩니다. `scripts/` 저장소 유지 관리 도구는 저장소 checkout에서만 사용할 수 있으며 설치 패키지에서는 제외됩니다. `src/native/` 아래 Darwin ACL reader binary, C source와 maintainer build script는 포함되며, build script는 provenance/rebuild 용도이고 CLI runtime에서 실행하거나 컴파일러를 호출하지 않습니다. 기존 0.2.2 release archive는 이 후속 helper를 포함하지 않습니다. 실행 증거는 저장소의 `verification/`에 남습니다.
 
 ## 명령
 
