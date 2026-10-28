@@ -1,4 +1,4 @@
-import { categoryLabel, comparisonControlState, filterArtifacts, filterFindings, gateLabel, pageItems, runStatusLabel, toolStatusLabel, verificationLabel } from './view-model.mjs';
+import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, gateLabel, pageItems, runStatusLabel, toolStatusLabel, verificationLabel } from './view-model.mjs';
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, className, value) => {
@@ -7,9 +7,12 @@ const el = (tag, className, value) => {
   if (value !== undefined && value !== null) node.textContent = String(value);
   return node;
 };
-const field = (label, value, className = '') => {
+const field = (label, value, className = '', isPath = false) => {
   const cell = el('div', 'summary-cell');
-  cell.append(el('dt', '', label), el('dd', className, value ?? '기록 없음'));
+  const content = el('dd', className);
+  if (isPath && typeof value === 'string') content.append(pathDetails(value));
+  else content.textContent = value ?? '기록 없음';
+  cell.append(el('dt', '', label), content);
   return cell;
 };
 const jsonText = (value) => {
@@ -194,7 +197,7 @@ function detailHeading(title, note) {
 }
 function appendDefinitionGrid(parent, pairs) {
   const dl = el('dl', 'record-summary');
-  for (const [label, value, klass] of pairs) dl.append(field(label, value, klass));
+  for (const [label, value, klass, isPath] of pairs) dl.append(field(label, value, klass, isPath));
   parent.append(dl);
 }
 function provenanceBlock(parent, value, title = '출처 및 실행 기록') {
@@ -228,6 +231,38 @@ function drawTools(parent, run) {
   section.append(ul);
   parent.append(section);
 }
+function pathDetails(value) {
+  const path = compactPath(value);
+  const details = el('details', 'path-details');
+  details.append(el('summary', 'path-summary mono', path.summary || '빈 경로'));
+  details.append(el('pre', 'path-full mono', path.full));
+  return details;
+}
+function findingLocation(location) {
+  const content = el('div', 'finding-location');
+  if (typeof location === 'string') content.append(pathDetails(location));
+  else if (typeof location?.path === 'string') {
+    content.append(pathDetails(location.path));
+    if (Object.keys(location).some((key) => key !== 'path')) {
+      const metadata = el('details');
+      metadata.append(el('summary', '', '위치 메타데이터'), el('pre', 'path-full mono', jsonText(location)));
+      content.append(metadata);
+    }
+  } else {
+    const details = el('details', 'path-details');
+    details.append(el('summary', 'path-summary', '위치 기록 펼치기'), el('pre', 'path-full mono', jsonText(location ?? {})));
+    content.append(details);
+  }
+  return content;
+}
+function findingCell(label, className = '') {
+  const cell = el('td', className);
+  cell.setAttribute('role', 'cell');
+  const name = el('span', 'finding-cell-label', label);
+  name.setAttribute('aria-hidden', 'true');
+  cell.append(name);
+  return cell;
+}
 function findingContent(finding) {
   const article = el('div', 'finding-title');
   article.append(el('strong', '', finding.title ?? '제목 미기록'));
@@ -256,11 +291,19 @@ function drawPager(parent, info, onPage) {
   const previous = el('button', 'page-button', '이전');
   previous.type = 'button';
   previous.disabled = info.page <= 1;
-  previous.addEventListener('click', () => onPage(info.page - 1));
+  previous.addEventListener('click', () => {
+    onPage(info.page - 1);
+    const buttons = parent.querySelectorAll('.pager .page-button');
+    (buttons[0]?.disabled ? buttons[1] : buttons[0])?.focus();
+  });
   const next = el('button', 'page-button', '다음');
   next.type = 'button';
   next.disabled = info.page >= info.pages;
-  next.addEventListener('click', () => onPage(info.page + 1));
+  next.addEventListener('click', () => {
+    onPage(info.page + 1);
+    const buttons = parent.querySelectorAll('.pager .page-button');
+    (buttons[1]?.disabled ? buttons[0] : buttons[1])?.focus();
+  });
   actions.append(previous, next);
   pager.append(actions);
   parent.append(pager);
@@ -274,20 +317,34 @@ function drawFindingRows() {
   tbody.replaceChildren();
   for (const finding of info.items) {
     const row = el('tr');
-    row.append(el('td', 'mono', finding.severity ?? 'unknown'), el('td', 'mono', finding.ruleId ?? '규칙 미기록'), el('td', 'mono', finding.toolId ?? '도구 미기록'));
-    const location = typeof finding.location === 'string' ? finding.location : finding.location?.path ?? jsonText(finding.location ?? {});
-    row.append(el('td', 'mono', location));
-    row.append(el('td', '', verificationLabel(finding.verification)));
-    const content = el('td');
+    row.setAttribute('role', 'row');
+    const content = findingCell('항목 / 근거', 'finding-cell--primary');
     content.append(findingContent(finding));
     row.append(content);
+    for (const [label, value] of [
+      ['심각도', finding.severity ?? 'unknown'], ['규칙 ID', finding.ruleId ?? '규칙 미기록'], ['도구', finding.toolId ?? '도구 미기록'],
+    ]) {
+      const cell = findingCell(label, 'mono');
+      cell.append(el('span', '', value));
+      row.append(cell);
+    }
+    const location = findingCell('위치');
+    location.append(findingLocation(finding.location));
+    const verification = findingCell('검증');
+    verification.append(el('span', '', verificationLabel(finding.verification)));
+    row.append(location, verification);
     tbody.append(row);
   }
+  const empty = section.querySelector('.finding-empty');
+  empty.hidden = info.total > 0;
+  empty.textContent = allFindings.length === 0
+    ? '이 실행에는 저장된 발견 항목이 없습니다.'
+    : '현재 검색·필터와 일치하는 항목이 없습니다. 조건을 변경하거나 결과 필터를 초기화하세요.';
   const pager = section.querySelector('.pager');
   if (pager) pager.remove();
   drawPager(section, info, (page) => { findingPage = page; drawFindingRows(); });
   const count = section.querySelector('.block-heading small');
-  if (count) count.textContent = `${info.total}개 표시 · 전체 ${allFindings.length}개 저장 행`;
+  if (count) count.textContent = `${info.total}개 일치 / 전체 ${allFindings.length}개 저장 행`;
 }
 function drawFindings(parent, run) {
   const section = el('section', 'block');
@@ -310,27 +367,55 @@ function drawFindings(parent, run) {
   const all = document.createElement('option'); all.value = 'all'; all.textContent = '전체'; toolSelect.append(all);
   for (const id of tools) { const option = document.createElement('option'); option.value = id; option.textContent = id; toolSelect.append(option); }
   toolLabel.append(toolSelect);
-  controls.append(searchLabel, severityLabel, toolLabel);
-  section.append(detailHeading('저장된 발견 항목', `${run.findings?.length ?? 0}개 저장 행`), controls);
+  const reset = el('button', 'filters-reset', '결과 필터 초기화');
+  reset.type = 'button';
+  controls.append(searchLabel, severityLabel, toolLabel, reset);
+  const active = el('div', 'active-filters');
+  active.setAttribute('aria-label', '적용 중인 결과 필터');
+  section.append(detailHeading('저장된 발견 항목', `${run.findings?.length ?? 0}개 저장 행`), controls, active);
   const scroll = el('div', 'table-scroll');
-  const table = document.createElement('table');
+  const table = el('table', 'finding-table');
+  table.setAttribute('role', 'table');
+  table.setAttribute('aria-label', '저장된 발견 항목');
   const thead = document.createElement('thead');
+  thead.setAttribute('role', 'rowgroup');
   const tr = document.createElement('tr');
-  for (const heading of ['심각도', '규칙 ID', '도구', '위치', '검증', '항목 / 근거']) tr.append(el('th', '', heading));
+  tr.setAttribute('role', 'row');
+  for (const heading of ['항목 / 근거', '심각도', '규칙 ID', '도구', '위치', '검증']) {
+    const th = el('th', '', heading);
+    th.scope = 'col';
+    th.setAttribute('role', 'columnheader');
+    tr.append(th);
+  }
   thead.append(tr);
   const tbody = document.createElement('tbody');
+  tbody.setAttribute('role', 'rowgroup');
   table.append(thead, tbody); scroll.append(table); section.append(scroll);
+  const empty = el('p', 'finding-empty notice');
+  empty.hidden = true;
+  section.append(empty);
   parent.append(section);
   allFindings = Array.isArray(run.findings) ? run.findings : [];
+  findingPage = 1;
   const apply = () => {
+    active.replaceChildren();
+    const conditions = [
+      ['검색', search.value.trim()], ['심각도', severity.value === 'all' ? '' : severity.value], ['도구', toolSelect.value === 'all' ? '' : toolSelect.value],
+    ].filter(([, value]) => value);
+    for (const [label, value] of conditions) active.append(el('span', 'filter-chip', `${label}: ${value}`));
+    if (!conditions.length) active.append(el('span', 'muted', '적용 중인 결과 필터 없음'));
     filteredFindings = filterFindings(allFindings, { query: search.value, severity: severity.value, tool: toolSelect.value });
     findingPage = 1; drawFindingRows();
   };
   search.addEventListener('input', apply);
   severity.addEventListener('change', apply);
   toolSelect.addEventListener('change', apply);
-  filteredFindings = allFindings;
-  drawFindingRows();
+  reset.addEventListener('click', () => {
+    search.value = ''; severity.value = 'all'; toolSelect.value = 'all';
+    apply();
+    search.focus();
+  });
+  apply();
 }
 function drawRun(parent, run, artifact) {
   const top = el('div');
@@ -341,7 +426,7 @@ function drawRun(parent, run, artifact) {
   title.append(safeStatusStamp(run.status));
   top.append(title);
   const pairs = [
-    ['실행 ID', run.id], ['대상 경로', run.target?.path], ['리비전', run.target?.revision ?? '기록 없음'],
+    ['실행 ID', run.id], ['대상 경로', run.target?.path, '', true], ['리비전', run.target?.revision ?? '기록 없음'],
     ['작업 트리', run.target?.dirty === true ? '변경 있음' : run.target?.dirty === false ? '변경 없음' : '상태 미기록'],
     ['시작', run.startedAt], ['종료', run.endedAt],
     ['저장된 발견 행', run.findings?.length ?? 0], ['결과 의미', run.status === 'completed' ? '실행 완료 · 안전 확인이 아님' : run.status === 'partial' ? '부분 완료 · 범위가 제한됨' : '실패 · 결과 범위 제한'],
@@ -359,10 +444,17 @@ function drawRun(parent, run, artifact) {
 function comparisonTable(parent, entries, page, onPage) {
   const info = pageItems(entries ?? [], page, 100);
   const scroll = el('div', 'table-scroll');
-  const table = document.createElement('table');
+  scroll.tabIndex = 0;
+  scroll.setAttribute('role', 'region');
+  scroll.setAttribute('aria-label', '비교 항목 표 · 가로로 스크롤할 수 있습니다');
+  const table = el('table', 'comparison-table');
   const head = document.createElement('thead');
   const hr = document.createElement('tr');
-  for (const title of ['범주', 'ID / 정체성', '전', '후', '이유']) hr.append(el('th', '', title));
+  for (const title of ['범주', 'ID / 정체성', '전', '후', '이유']) {
+    const th = el('th', '', title);
+    th.scope = 'col';
+    hr.append(th);
+  }
   head.append(hr);
   const body = document.createElement('tbody');
   for (const entry of info.items) {
@@ -402,9 +494,9 @@ function drawComparison(parent, comparison, originLabel, inputs = undefined) {
   const baseline = c.baseline ?? {};
   const current = c.current ?? {};
   appendDefinitionGrid(section, [
-    ['기준 실행', baseline.id], ['기준 대상', baseline.target?.path], ['기준 리비전', baseline.target?.revision ?? '기록 없음'],
+    ['기준 실행', baseline.id], ['기준 대상', baseline.target?.path, '', true], ['기준 리비전', baseline.target?.revision ?? '기록 없음'],
     ['기준 작업 트리', baseline.target?.dirty === true ? '변경 있음' : baseline.target?.dirty === false ? '변경 없음' : '상태 미기록'],
-    ['현재 실행', current.id], ['현재 대상', current.target?.path], ['현재 리비전', current.target?.revision ?? '기록 없음'],
+    ['현재 실행', current.id], ['현재 대상', current.target?.path, '', true], ['현재 리비전', current.target?.revision ?? '기록 없음'],
     ['현재 작업 트리', current.target?.dirty === true ? '변경 있음' : current.target?.dirty === false ? '변경 없음' : '상태 미기록'],
     ['기준 상태', runStatusLabel(baseline.status)], ['현재 상태', runStatusLabel(current.status)],
     ['게이트 위반', gate.violations?.length ?? 0], ['판단 불명', gate.unknown?.length ?? 0], ['비교 범위', c.status === 'complete' ? '완료' : '불완전 · 범위 부족'],
@@ -457,8 +549,8 @@ function drawComparisonSummary(parent, comparison) {
   const section = el('section', 'block');
   section.append(detailHeading('저장된 비교', '저장된 비교 · 원본 검사 재검증 안 함'));
   appendDefinitionGrid(section, [
-    ['기준 실행 ID', comparison.baseline?.id], ['기준 대상', comparison.baseline?.target?.path], ['기준 상태', runStatusLabel(comparison.baseline?.status)],
-    ['현재 실행 ID', comparison.current?.id], ['현재 대상', comparison.current?.target?.path], ['현재 상태', runStatusLabel(comparison.current?.status)],
+    ['기준 실행 ID', comparison.baseline?.id], ['기준 대상', comparison.baseline?.target?.path, '', true], ['기준 상태', runStatusLabel(comparison.baseline?.status)],
+    ['현재 실행 ID', comparison.current?.id], ['현재 대상', comparison.current?.target?.path, '', true], ['현재 상태', runStatusLabel(comparison.current?.status)],
   ]);
   drawComparison(section, comparison, '저장된 비교 · 원본 검사 재검증 안 함');
   parent.append(section);
@@ -541,6 +633,12 @@ async function compareSelected() {
 $('reload').addEventListener('click', loadCatalog);
 $('catalog-filters').addEventListener('submit', (event) => event.preventDefault());
 for (const id of ['catalog-search', 'kind-filter', 'status-filter', 'tool-filter']) $(id).addEventListener(id === 'catalog-search' ? 'input' : 'change', drawCatalog);
+$('catalog-reset').addEventListener('click', () => {
+  $('catalog-search').value = '';
+  for (const id of ['kind-filter', 'status-filter', 'tool-filter']) $(id).value = 'all';
+  drawCatalog();
+  $('catalog-search').focus();
+});
 $('compare-button').addEventListener('click', compareSelected);
 for (const id of ['baseline-select', 'current-select']) $(id).addEventListener('change', updateComparisonControls);
 loadCatalog();

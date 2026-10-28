@@ -23,10 +23,11 @@
         <p id="catalog-counts" class="count-line">불러오는 중…</p>
         <p id="truncation" class="notice" hidden></p>
         <form id="catalog-filters" class="filters">
-          <label>검색<input id="catalog-search" type="search" autocomplete="off" placeholder="실행 ID, 위치, 대상"></label>
+          <label>자료 검색<input id="catalog-search" type="search" autocomplete="off" placeholder="실행 ID, 위치, 대상"></label>
           <div class="filter-pair"><label>자료 종류<select id="kind-filter"><option value="all">전체</option><option value="run">검사 실행</option><option value="comparison">저장된 비교</option><option value="unknown">기타 / 오류</option></select></label>
           <label>실행 상태<select id="status-filter"><option value="all">전체</option><option value="completed">실행 완료</option><option value="partial">부분 완료</option><option value="failed">실패</option><option value="complete">비교 완료</option><option value="incomplete">비교 불완전</option><option value="error">자료 오류</option></select></label></div>
           <label>도구 ID<select id="tool-filter"><option value="all">전체 도구</option></select></label>
+          <button id="catalog-reset" class="quiet-button filters-reset" type="button">목록 필터 초기화</button>
         </form>
         <p id="catalog-state" class="empty-state">JavaScript가 필요한 화면입니다.</p>
         <ul id="artifact-list" class="artifact-list" aria-label="저장된 자료"></ul>

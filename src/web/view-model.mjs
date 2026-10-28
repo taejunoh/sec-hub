@@ -1,5 +1,20 @@
 const text = (value) => String(value ?? '').toLocaleLowerCase();
 
+export function compactPath(value) {
+  const full = String(value ?? '');
+  const characters = Array.from(full);
+  if (characters.length <= 48) return { summary: full, full };
+  let end = full.length;
+  while (end > 0 && (full[end - 1] === '/' || full[end - 1] === '\\')) end -= 1;
+  const lastSeparator = Math.max(full.lastIndexOf('/', end - 1), full.lastIndexOf('\\', end - 1));
+  const previousSeparator = lastSeparator > 0
+    ? Math.max(full.lastIndexOf('/', lastSeparator - 1), full.lastIndexOf('\\', lastSeparator - 1)) : -1;
+  const context = full.slice(previousSeparator + 1);
+  const tail = Array.from(context).slice(-44).join('');
+  const separator = full.includes('\\') && !full.includes('/') ? '\\' : '/';
+  return { summary: `…${separator}${tail}`, full };
+}
+
 export function filterArtifacts(artifacts, { query = '', kind = 'all', status = 'all', tool = 'all' } = {}) {
   const q = text(query).trim();
   return (Array.isArray(artifacts) ? artifacts : []).filter((artifact) => {
@@ -21,7 +36,7 @@ export function filterFindings(findings, { query = '', severity = 'all', tool = 
     const location = finding?.location;
     const locationText = typeof location === 'string' ? location : JSON.stringify(location ?? {});
     const haystack = [finding?.severity, finding?.ruleId, finding?.toolId, finding?.title,
-      finding?.description, locationText].map(text).join(' ');
+      finding?.description, location?.path, locationText].map(text).join(' ');
     return (severity === 'all' || finding?.severity === severity)
       && (tool === 'all' || finding?.toolId === tool)
       && (!q || haystack.includes(q));
