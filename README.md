@@ -200,6 +200,10 @@ node --test
 
 0.2.4는 소스 commit `ecf0c92f362e0854660162927d1d855e1f37644d`의 한국어/영어 개발자 워크벤치를 포함합니다. 새 tarball SHA-256은 `758c0e93364bff07b835fc04fb8ca79d04f2f66bc77ac40d3fb7e7f295448402`입니다. Node 24의 새 private npm 프로젝트에 오프라인 설치해 확인했고, 설치된 브라우저 점검은 6/6 통과했습니다. CLI 패키지 스모크는 통제된 가짜 scanner만 사용했으며, 과거 fixture 표시와 별개로 새 scanner/provider 감사를 수행하지 않았습니다. Anthropic workflow는 보류합니다. [0.2.4 패키지](releases/sec-hub-local-0.2.4.tgz), [매니페스트](releases/sec-hub-local-0.2.4.manifest.json), [패키지 검증 보고서](verification/release-0.2.4/REPORT.md).
 
+## Private CI (Stage 2)
+
+2026-10-28 GitHub Actions run [40737123371](https://github.com/taejunoh/sec-hub/actions/runs/40737123371) completed successfully on source commit `8d2959862ce5fd72cb23ffac87880192a331caf0`: six of six jobs passed across Linux, macOS and Windows with Node 22/24. Linux and macOS ran the full supported suite and package smoke; Windows ran the declared portable subset plus native process-tree and fail-closed I/O cases. [Stage 2 report and preserved evidence](verification/private-ci/REPORT.md) records per-job counts, earlier failed attempts, and scope limits. This run predates the uncommitted Stage 3 web-execution changes in the current checkout; those changes need a final CI run before they can be described as CI-verified.
+
 ## 현재 소스 개발자 워크벤치
 
 현재 소스 commit `6381c306`의 저장 결과 화면은 한국어/영어를 지원하는 개발자 워크벤치로 바뀌었습니다. 현재 소스 미리보기는 [http://127.0.0.1:64076/](http://127.0.0.1:64076/)이며, 전체 검증과 증거 범위는 [개발자 워크벤치 보고서](verification/developer-workbench/REPORT.md)에 기록했습니다. 배포된 [0.2.3 패키지](releases/sec-hub-local-0.2.3.tgz)는 이 변경 전 파일이며 그대로 유지됩니다.
