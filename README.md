@@ -196,6 +196,10 @@ node --test
 
 0.1.1은 자동 테스트 68개를 통과했고, Codex Security와 Open Code Review의 ChatGPT 인증을 포함한 실제 5개 CLI 검사에서 검증용 코드의 결과 13건을 수집했습니다. [통합 HTML 보고서](verification/authenticated-five-combined/report.html)와 [인증·실행 검증 기록](verification/AUTHENTICATED-VALIDATION.md)을 확인할 수 있습니다. 최초 실행과 OCR 예산 조정 재실행의 출처를 보존했으며, 동일 코드의 해시와 원본 결과를 검증해 결합했습니다. 다섯 도구의 실행 경로와 모델·제한 설정은 `verification/authenticated-tools.config.json`에 있습니다. 인증 정보는 패키지에 포함하지 않으며, 다른 기기에서는 도구 설치·로그인과 경로 변경이 필요합니다. 0.2.0은 이 이전 검증 이력을 보존하면서 Cloudflare/Anthropic의 공식 security skill 실제 실행 기능을 추가합니다. 새 일곱 도구 완료 주장은 별도 native 증거 검증 후에만 기록합니다.
 
+## 0.2.4 패키지
+
+0.2.4는 소스 commit `ecf0c92f362e0854660162927d1d855e1f37644d`의 한국어/영어 개발자 워크벤치를 포함합니다. 새 tarball SHA-256은 `758c0e93364bff07b835fc04fb8ca79d04f2f66bc77ac40d3fb7e7f295448402`입니다. Node 24의 새 private npm 프로젝트에 오프라인 설치해 확인했고, 설치된 브라우저 점검은 6/6 통과했습니다. CLI 패키지 스모크는 통제된 가짜 scanner만 사용했으며, 과거 fixture 표시와 별개로 새 scanner/provider 감사를 수행하지 않았습니다. Anthropic workflow는 보류합니다. [0.2.4 패키지](releases/sec-hub-local-0.2.4.tgz), [매니페스트](releases/sec-hub-local-0.2.4.manifest.json), [패키지 검증 보고서](verification/release-0.2.4/REPORT.md).
+
 ## 현재 소스 개발자 워크벤치
 
 현재 소스 commit `6381c306`의 저장 결과 화면은 한국어/영어를 지원하는 개발자 워크벤치로 바뀌었습니다. 현재 소스 미리보기는 [http://127.0.0.1:64076/](http://127.0.0.1:64076/)이며, 전체 검증과 증거 범위는 [개발자 워크벤치 보고서](verification/developer-workbench/REPORT.md)에 기록했습니다. 배포된 [0.2.3 패키지](releases/sec-hub-local-0.2.3.tgz)는 이 변경 전 파일이며 그대로 유지됩니다.
