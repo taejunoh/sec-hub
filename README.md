@@ -1,8 +1,8 @@
 # Sec Hub
 
-> 현재 0.2.1은 기존 native review의 후보 20개를 검토하고 수정한 새 review build입니다. 13개 기능 결함을 수정했고 Node 24 전체 자동 테스트 315/315개가 통과했습니다. 우선순위 수정 25개 focused test와 중간 우선순위 49개 명세 회귀, 208개 bounded citation 검사, 36개 품질 검사도 통과했습니다. 나머지 7개는 동작 결함으로 확인되지 않은 스타일/죽은 코드 권고여서 이번 수정 범위에서 제외했습니다. [Review 20 평가](verification/review-20/REVIEW.md), [기계 판독 평가](verification/review-20/assessment.json), [HTML 요약](verification/review-20/assessment.html)을 확인하세요.
+> 0.2.1 배포 파일을 Open Code Review로 다시 검사해 지원 대상 **35/35개 파일**을 완료했습니다. 패키지의 Markdown 문서 2개는 검사기가 지원하지 않아 제외됐습니다. 기존 수정 13건은 패키지 소스 해시와 새 회귀 테스트로 확인됐고, 같은 원인의 경고는 재검출되지 않았습니다. 전체 테스트는 Node 24에서 **315/315 통과**했습니다. [0.2.1 재검사·수정 대조 보고서](verification/ocr-0.2.1-assessment/REPORT.md)와 [실제 검사 결과](verification/ocr-0.2.1-rescan/run.json)를 확인하세요.
 
-기존 native 감사는 그대로 `completed_with_errors`인 부분 결과입니다. 원본 20개 코멘트와 native 증거는 변경하지 않았으며, 감사가 미완료된 파일과 초과된 토큰 예산도 그대로 남아 있습니다. 이 review build와 로컬 회귀 결과는 새 native 검사, 취약점 부재 확인, 또는 7개 통합 도구 완료를 뜻하지 않습니다. 통합은 기존과 같이 6/7이며 Anthropic 검증은 보류 중입니다. [7개 도구 진행 상태](verification/SEVEN-TOOL-STATUS.md)와 [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md)를 확인하세요.
+새 검사에는 후보 44건(상 6·중 20·하 18)이 있습니다. 기존 보류 권고의 반복 6건과 새 후보 38건으로 구분했으며, 새 고위험 후보 중 2건은 통제된 로컬 재현으로 확인했고 아직 수정하지 않았습니다. 일반 재검사에서 경고가 나오지 않았다는 사실을 13건 각각의 명시적 native 승인이나 취약점 부재 증명으로 해석하지 않습니다. 기존 0.2.0 native 부분 결과와 [원래 20건의 로컬 평가](verification/review-20/REVIEW.md)는 과거 증거로 보존했습니다. 7개 도구 통합은 기존 cohort의 6/7이며 Anthropic은 계속 보류합니다. [7개 도구 진행 상태](verification/SEVEN-TOOL-STATUS.md)와 [6개 도구 검증 기록](verification/SIX-TOOL-VALIDATION.md)을 확인하세요.
 
 기존 Cloudflare 실행은 정적 source-only quick coverage로, 두 개의 미확정 후보와 unknown 심각도를 기록했습니다. SARIF 스키마·인증정보 패턴 검사와 HTML·증거 링크 QA를 완료했습니다. 이는 7개 검증 완료나 동적 악용 확인을 뜻하지 않습니다. 활성화된 1회 후속 작업은 2026년 10월 29일 오전 6:10(뉴욕 시간)에 Anthropic native canary, 정적 검사, 최종 집계만 수행합니다.
 
