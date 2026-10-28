@@ -4,10 +4,11 @@ import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runProcess } from '../src/processes.mjs';
+import { atomicWriteFile, ensureSafeDirectory } from '../src/safe-io.mjs';
 
 // Only the OS process boundary is simulated. runProcess and its timers/events are real.
 async function windowsFixture(t, { helper = 'success', root = 'C:\\Windows' } = {}) {
@@ -99,22 +100,67 @@ test('Windows simulation: invalid system root cannot invoke a PATH executable', 
   assert.match(result.reason, /Windows process-tree cleanup .*not confirmed/);
 });
 
-test('Windows native: timeout terminates descendant heartbeat', { skip: process.platform !== 'win32' }, async t => {
-  const directory = await mkdtemp(join(tmpdir(), 'sec-hub-high31-'));
-  const heartbeat = join(directory, 'heartbeat'), pidFile = join(directory, 'pid');
-  let pid;
-  t.after(async () => {
-    if (!pid) try { pid = Number(await readFile(pidFile, 'utf8')); } catch {}
-    if (pid) try { process.kill(pid, 'SIGKILL'); } catch {}
-    await rm(directory, { recursive: true, force: true });
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+function alive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+}
+
+for (const trigger of ['timeout', 'cancel', 'output-limit']) {
+  test(`Windows native: ${trigger} terminates a ready descendant heartbeat`, { skip: process.platform !== 'win32', timeout: 15000 }, async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'sec-hub-high31-'));
+    const heartbeat = join(directory, 'heartbeat'), pidFile = join(directory, 'pid'), floodGate = join(directory, 'flood');
+    const controller = new AbortController();
+    let pids, pending;
+    try {
+      const worker = 'const fs=require("node:fs");fs.writeFileSync(process.argv[2],JSON.stringify([process.pid,process.ppid]));fs.writeFileSync(process.argv[1],"x");setInterval(()=>fs.appendFileSync(process.argv[1],"x"),20)';
+      const leader = 'const fs=require("node:fs");require("node:child_process").spawn(process.execPath,["-e",process.argv[1],process.argv[2],process.argv[3]],{stdio:"ignore"});setInterval(()=>{if(fs.existsSync(process.argv[4]))process.stdout.write("x".repeat(4096));},20)';
+      pending = runProcess({ command: process.execPath, args: ['-e', leader, worker, heartbeat, pidFile, floodGate] }, {
+        timeoutMs: trigger === 'timeout' ? 5000 : 10000, signal: controller.signal, maxOutputBytes: 64,
+      });
+      const readyDeadline = Date.now() + 3500;
+      let first;
+      while (Date.now() < readyDeadline) {
+        try {
+          pids = JSON.parse(await readFile(pidFile, 'utf8'));
+          first = await readFile(heartbeat, 'utf8');
+          if (first.length >= 3) break;
+        } catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
+        await pause(25);
+      }
+      assert.ok(Array.isArray(pids) && pids.length === 2 && pids.every(pid => Number.isSafeInteger(pid) && pid > 0), 'descendant and leader PIDs are ready');
+      assert.ok(first?.length >= 3, 'descendant produced multiple heartbeats before termination');
+      assert.ok(pids.every(alive), 'both real processes are alive before the trigger');
+      await pause(100);
+      assert.ok((await readFile(heartbeat, 'utf8')).length > first.length, 'heartbeat grows before the trigger');
+      if (trigger === 'cancel') controller.abort();
+      if (trigger === 'output-limit') await writeFile(floodGate, 'start');
+      const result = await pending;
+      assert.equal(result.status, { timeout: 'timed_out', cancel: 'cancelled', 'output-limit': 'failed' }[trigger]);
+      assert.doesNotMatch(result.reason, /not confirmed/);
+      if (trigger === 'output-limit') {
+        assert.match(result.reason, /Output exceeds 64 byte limit/);
+        assert.equal(result.stdout, '');
+      }
+      const before = await readFile(heartbeat, 'utf8');
+      await pause(250);
+      assert.equal(await readFile(heartbeat, 'utf8'), before, 'observed live descendant heartbeat stops');
+      assert.ok(pids.every(pid => !alive(pid)), 'leader and descendant PIDs are no longer alive');
+    } finally {
+      controller.abort();
+      await pending;
+      if (!pids) try { pids = JSON.parse(await readFile(pidFile, 'utf8')); } catch {}
+      for (const pid of pids ?? []) if (Number.isSafeInteger(pid) && pid > 0) try { process.kill(pid, 'SIGKILL'); } catch {}
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   });
-  const worker = 'const fs=require("node:fs");fs.writeFileSync(process.argv[2],String(process.pid));setInterval(()=>fs.appendFileSync(process.argv[1],"x"),10)';
-  const leader = 'require("node:child_process").spawn(process.execPath,["-e",process.argv[1],process.argv[2],process.argv[3]],{stdio:"ignore"});setInterval(()=>{},1000)';
-  const result = await runProcess({ command: process.execPath, args: ['-e', leader, worker, heartbeat, pidFile] }, { timeoutMs: 1500 });
-  pid = Number(await readFile(pidFile, 'utf8'));
-  assert.equal(result.status, 'timed_out');
-  assert.doesNotMatch(result.reason, /not confirmed/);
-  const before = await readFile(heartbeat, 'utf8');
-  await new Promise(resolve => setTimeout(resolve, 200));
-  assert.equal(await readFile(heartbeat, 'utf8'), before);
+}
+
+test('Windows native: unsupported ACL trust rejects writes before mutation', { skip: process.platform !== 'win32' }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sec-hub-win-acl-'));
+  try {
+    await assert.rejects(ensureSafeDirectory(join(directory, 'new')), /unsupported.*platform|ACL/i);
+    await assert.rejects(atomicWriteFile(join(directory, 'report'), 'synthetic'), /unsupported.*platform|ACL/i);
+    assert.deepEqual(await readdir(directory), []);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
