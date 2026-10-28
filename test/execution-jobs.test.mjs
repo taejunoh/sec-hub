@@ -42,11 +42,34 @@ test('cancel during reporting stays cancelling until joined completion and termi
 });
 
 test('deadline owns first abort cause and shutdown joins a scan that ignores abort until it settles',async t=>{
-  const f=await fixture(t,{maxJobTimeMs:35}),gate=deferred();let entered=false;
-  const c=module.createJobController({configuration:f.configuration,scan:async options=>{entered=true;await gate.promise;return fakeRun(options);},report:async()=>{}});
-  const job=c.start(f.request);await until(()=>entered);await until(()=>c.get(job.id).abortReason==='deadline');c.cancel(job.id);
-  let closed=false;const closing=c.close().then(()=>closed=true);await pause(10);assert.equal(closed,false);gate.resolve();await closing;
-  assert.equal(c.get(job.id).state,'failed');assert.equal(c.get(job.id).errorCode,'job_timeout');assert.equal(c.get(job.id).abortReason,'deadline');
+  const f=await fixture(t,{maxJobTimeMs:35}),gate=deferred(),entered=deferred();
+  // Real path checks may exceed 35 ms under suite load. Advance the deadline
+  // only after scan entry; this case exercises an in-flight, abort-ignoring scan.
+  t.mock.timers.enable({apis:['setTimeout']});
+  const c=module.createJobController({configuration:f.configuration,scan:async options=>{entered.resolve();await gate.promise;return fakeRun(options);},report:async()=>{}});
+  const job=c.start(f.request);
+  try{
+    await entered.promise;
+    t.mock.timers.tick(34);assert.equal(c.get(job.id).abortReason,null);
+    t.mock.timers.tick(1);assert.equal(c.get(job.id).abortReason,'deadline');c.cancel(job.id);
+    let closed=false;const closing=c.close().then(()=>closed=true);
+    await new Promise(resolve=>setImmediate(resolve));assert.equal(closed,false);assert.equal(c.get(job.id).state,'cancelling');
+    gate.resolve();await closing;
+    assert.equal(c.get(job.id).state,'failed');assert.equal(c.get(job.id).errorCode,'job_timeout');assert.equal(c.get(job.id).abortReason,'deadline');
+  }finally{gate.resolve();await c.close();t.mock.timers.reset();}
+});
+
+test('deadline during path preparation prevents the scan from starting',async t=>{
+  const f=await fixture(t,{maxJobTimeMs:35});let scans=0,reports=0;
+  t.mock.timers.enable({apis:['setTimeout']});
+  const c=module.createJobController({configuration:f.configuration,scan:async options=>{scans++;return fakeRun(options);},report:async()=>{reports++;}});
+  const job=c.start(f.request);
+  try{
+    // execute() installs its timer before yielding to the real filesystem check.
+    await Promise.resolve();t.mock.timers.tick(35);
+    assert.equal(c.get(job.id).abortReason,'deadline');await c.close();
+    assert.equal(scans,0);assert.equal(reports,0);assert.equal(c.get(job.id).state,'failed');assert.equal(c.get(job.id).errorCode,'job_timeout');assert.equal(c.get(job.id).abortReason,'deadline');
+  }finally{await c.close();t.mock.timers.reset();}
 });
 
 test('cleanup uncertainty survives later report failure, quarantines admission and rejects joined close',async t=>{
