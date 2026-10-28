@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { resolve,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cloudflareSourceRoot } from './helpers/cloudflare-source.mjs';
 const scenario=process.env.SEC_HUB_RELEASE022_SCENARIO;
 if(scenario){
  const root=process.env.SEC_HUB_RELEASE022_ROOT,target=join(root,'target'),artifactDir=join(root,'raw'),workRoot=join(root,'work');await fs.mkdir(target);await fs.writeFile(join(target,'target.mjs'),'export const run = input => input;\n');let pins=0,finalizing=false;
@@ -24,7 +25,7 @@ if(scenario){
  return next(url,context);
  }});
  const {runSupervisedCloudflare}=await import('../src/agents/supervised-cloudflare.mjs');const {PINS}=await import('../src/agents/validation.mjs');
- let exitCode,error;try{exitCode=await runSupervisedCloudflare({id:'cloudflare',command:process.execPath,args:[resolve('test/fixtures/supervised-fake-codex.mjs'),'zero'],target,artifactDir,agentOptions:{strategy:'supervised-codex-workers',skillRoot:resolve('../../work/tools/cloudflare-security-audit'),workRoot,revision:PINS.cloudflare,model:'model',maxAgents:10,...(scenario==='preparation'?{preparationFrom:join(root,'prior/raw/cloudflare/execution-manifest.json'),preparationSha256:'a'.repeat(64)}:{})}});}catch(e){error=e.message;}
+ let exitCode,error;try{exitCode=await runSupervisedCloudflare({id:'cloudflare',command:process.execPath,args:[resolve('test/fixtures/supervised-fake-codex.mjs'),'zero'],target,artifactDir,agentOptions:{strategy:'supervised-codex-workers',skillRoot:cloudflareSourceRoot(),workRoot,revision:PINS.cloudflare,model:'model',maxAgents:10,...(scenario==='preparation'?{preparationFrom:join(root,'prior/raw/cloudflare/execution-manifest.json'),preparationSha256:'a'.repeat(64)}:{})}});}catch(e){error=e.message;}
  const read=async file=>fs.readFile(join(artifactDir,file),'utf8').catch(()=>null);process.stdout.write(JSON.stringify({exitCode,error,stages:await fs.readdir(workRoot),manifest:JSON.parse(await read('execution-manifest.json')),metadata:JSON.parse(await read('run-metadata.json')),report:await read('REPORT.md'),canonicalHashes:Object.fromEntries(await Promise.all(['run-metadata.json','REPORT.md'].map(async name=>[name,createHash('sha256').update((await read(name))??'').digest('hex')])))})+'\n');
 }else{
  async function run(mode){const root=await fs.mkdtemp(join(tmpdir(),'release022-lifecycle-'));try{const result=spawnSync(process.execPath,[fileURLToPath(import.meta.url)],{env:{...process.env,SEC_HUB_RELEASE022_SCENARIO:mode,SEC_HUB_RELEASE022_ROOT:root},encoding:'utf8',timeout:30000,maxBuffer:2*1024*1024});assert.equal(result.status,0,`error=${result.error?.code??'none'} signal=${result.signal??'none'}: ${result.stderr}`);return JSON.parse(result.stdout.trim().split('\n').at(-1));}finally{await fs.rm(root,{recursive:true,force:true});}}

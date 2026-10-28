@@ -9,8 +9,9 @@ import { loadCloudflareContracts, supervisedArgs } from '../src/agents/cloudflar
 import { PINS, sha256 } from '../src/agents/validation.mjs';
 import { runProcess } from '../src/processes.mjs';
 import * as promptPolicy from '../src/agents/cloudflare-prompts.mjs';
+import { cloudflareSourceRoot } from './helpers/cloudflare-source.mjs';
 
-const skillRoot=resolve('../../work/tools/cloudflare-security-audit');
+const skillRoot=cloudflareSourceRoot();
 let available=true;try{await access(join(skillRoot,'skills/security-audit/SKILL.md'));}catch{available=false;}
 async function fixture(mode='zero',maxAgents=10){
   const root=await mkdtemp(join(tmpdir(),'supervised-cf-test-')),target=join(root,'target'),artifactDir=join(root,'raw');

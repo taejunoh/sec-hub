@@ -9,7 +9,8 @@ import { codexArgs,cloudflarePrompt } from '../src/agents/invocation.mjs';
 import { runSupervisedCloudflare } from '../src/agents/supervised-cloudflare.mjs';
 import { preparePlan,assignHunter,applyHunter } from '../src/agents/supervised-validation.mjs';
 import { loadCloudflareContracts } from '../src/agents/cloudflare-prompts.mjs';
-const skillRoot=resolve('../../work/tools/cloudflare-security-audit');
+import { cloudflareSourceRoot } from './helpers/cloudflare-source.mjs';
+const skillRoot=cloudflareSourceRoot();
 const event=command=>({type:'item.completed',item:{type:'command_execution',command,status:'completed',exit_code:0}});
 const proof=command=>inspectNativeEvents('cloudflare',[event(command)],{skillRoot:'/official',copyTarget:'/stage/target'}).instructionRead;
 test('#15 rejects echoed commented substring and foreign-file instruction claims',()=>{
@@ -19,7 +20,11 @@ test('#15 accepts literal supported pinned readers and static cwd shell wrappers
  for(const command of ['cat /official/skills/security-audit/SKILL.md',"/bin/zsh -lc 'cat /official/skills/security-audit/SKILL.md'","sed -n '1,200p' /official/skills/security-audit/SKILL.md",'head -n 200 /official/skills/security-audit/SKILL.md',"/bin/zsh -lc 'cd /official/skills/security-audit && cat SKILL.md'",'cat .agents/skills/security-audit/SKILL.md'])assert.equal(proof(command),true,command);
 });
 test('#15 retained genuine native command evidence still proves pinned reads offline',async()=>{
- const path=resolve('verification/native-agent-execution-retry/raw/cloudflare/native-events.jsonl');const events=(await readFile(path,'utf8')).trim().split('\n').map(JSON.parse);assert.equal(inspectNativeEvents('cloudflare',events,{skillRoot}).instructionRead,true);
+ const path=resolve('verification/native-agent-execution-retry/raw/cloudflare/native-events.jsonl');const events=(await readFile(path,'utf8')).trim().split('\n').map(JSON.parse);
+ // Frozen provenance context for this retained recording; string parsing only.
+ // Never resolve or read the historic host path, or rewrite retained event bytes.
+ const historicalSkillRoot='/Users/example/Documents/Codex/2026-10-27/ai-7-cloudflare-anthropic-openai-nvidia/work/tools/cloudflare-security-audit';
+ assert.equal(inspectNativeEvents('cloudflare',events,{skillRoot:historicalSkillRoot}).instructionRead,true);
 });
 test('#14 real legacy validator rejects incomplete and absent status even with empty reasons',async()=>{
  const root=await mkdtemp(join(tmpdir(),'release022-legacy-'));try{
@@ -47,7 +52,7 @@ test('#13 real pinned ledger rejects invalid unit paths before state mutation',a
 test('#15 failed semicolon cd cannot prove a pinned read from actual decoy output',async()=>{
  const root=await mkdtemp(join(tmpdir(),'r022-cd-proof-'));try{
  const runner=join(root,'runner'),skillRoot=join(root,'pinned'),pinnedDir=join(skillRoot,'skills/security-audit');await mkdir(runner);await mkdir(pinnedDir,{recursive:true});await writeFile(join(runner,'SKILL.md'),'DECOY\n');await writeFile(join(pinnedDir,'SKILL.md'),'PINNED\n');
- const failed=`cd '${pinnedDir}/missing/..'; cat SKILL.md`,actual=spawnSync('/bin/sh',['-c',failed],{cwd:runner,encoding:'utf8'});assert.equal(actual.status,0);assert.equal(actual.stdout,'DECOY\n');assert.match(actual.stderr,/cd:/);
+ const failed=`cd -P '${pinnedDir}/missing/..'; cat SKILL.md`,actual=spawnSync('/bin/sh',['-c',failed],{cwd:runner,encoding:'utf8'});assert.equal(actual.status,0);assert.equal(actual.stdout,'DECOY\n');assert.match(actual.stderr,/cd:/);
  const inspect=(command,result)=>inspectNativeEvents('cloudflare',[{type:'item.completed',item:{type:'command_execution',command,status:'completed',exit_code:result.status,aggregated_output:result.stdout}}],{skillRoot,copyTarget:join(root,'target')}).instructionRead;
  assert.equal(inspect(failed,actual),false);
  const masked=`cat '${root}/missing' && cat '${pinnedDir}/SKILL.md'; cat '${runner}/SKILL.md'`,maskedResult=spawnSync('/bin/sh',['-c',masked],{cwd:runner,encoding:'utf8'});assert.equal(maskedResult.status,0);assert.equal(maskedResult.stdout,'DECOY\n');assert.equal(inspect(masked,maskedResult),false);

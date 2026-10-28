@@ -4,8 +4,9 @@ import { resolve } from 'node:path';
 import { access } from 'node:fs/promises';
 import { loadCloudflareContracts } from '../src/agents/cloudflare-prompts.mjs';
 import { preparePlan } from '../src/agents/supervised-validation.mjs';
+import { cloudflareSourceRoot } from './helpers/cloudflare-source.mjs';
 
-const skillRoot=resolve('../../work/tools/cloudflare-security-audit');
+const skillRoot=cloudflareSourceRoot();
 let available=true;try{await access(resolve(skillRoot,'skills/security-audit/SKILL.md'));}catch{available=false;}
 const c=available?await loadCloudflareContracts(skillRoot):null;
 function fixture(path='src/app.js'){

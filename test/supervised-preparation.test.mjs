@@ -8,7 +8,8 @@ import {preflightPreparationLocations} from '../src/agents/cloudflare-preparatio
 import {runSupervisedCloudflare} from '../src/agents/supervised-cloudflare.mjs';
 import {validateSupervisedCloudflare,finalizeSupervisedCloudflare} from '../src/agents/supervised-validation.mjs';
 import {PINS,sha256,safeRead} from '../src/agents/validation.mjs';
-const skillRoot=resolve('../../work/tools/cloudflare-security-audit'),sortFailure='Official coverage ledger invalid: $[5].coverage_id: units must be sorted lexicographically';
+import {cloudflareSourceRoot} from './helpers/cloudflare-source.mjs';
+const skillRoot=cloudflareSourceRoot(),sortFailure='Official coverage ledger invalid: $[5].coverage_id: units must be sorted lexicographically';
 let available=true;try{await access(join(skillRoot,'skills/security-audit/SKILL.md'));}catch{available=false;}
 const json=x=>JSON.stringify(x,null,2)+'\n';
 test('preparation location preflight pins source before any mkdir and rejects old-run overlaps',async()=>{

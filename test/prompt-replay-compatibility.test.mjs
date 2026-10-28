@@ -7,6 +7,7 @@ import {buildRolePrompt,replayPromptVersion,CLOUDFLARE_PROMPT_VERSION} from '../
 import {sha256,PINS} from '../src/agents/validation.mjs';
 import {runSupervisedCloudflare} from '../src/agents/supervised-cloudflare.mjs';
 import {validateSupervisedCloudflare,assertObservedPolicy} from '../src/agents/supervised-validation.mjs';
+import {cloudflareSourceRoot} from './helpers/cloudflare-source.mjs';
 const block=name=>({file:'HUNTING.md',ref:name,text:`official ${name}\n`,sha256:sha256(`official ${name}\n`)});
 const contracts={root:'/pinned/security-audit',companions:[],catalog:[],recon:['1a','1b','1c','1d'].map(block),...Object.fromEntries(['method','promotion','gate','hunterContract','critic','candidateVerifier','phase5'].map(k=>[k,block(k)])),branches:['confirmed','needs_validation','rejected'].map(block)};
 const context=role=>({role,agentId:'role-1',target:'/copy/target',runner:'/runner',architecture:'source architecture',plan:{source_objects:[],companion_selection:[]},candidate:{fingerprint:'candidate-1'}});
@@ -44,7 +45,7 @@ test('only absent version or explicit supported integer formats may replay',()=>
   if(version!==undefined)assert.throws(()=>buildRolePrompt(contracts,context('recon-1a'),version),/Unsupported Cloudflare prompt version/);
  }
 });
-const skillRoot=resolve('../../work/tools/cloudflare-security-audit');
+const skillRoot=cloudflareSourceRoot();
 let available=true;try{await access(join(skillRoot,'skills/security-audit/SKILL.md'));}catch{available=false;}
 test('fresh runner records v2 and rejects relabeling, missing or unknown versions without accepting saved prompt hashes',{skip:!available},async()=>{
  const root=await mkdtemp(join(tmpdir(),'cf-prompt-version-')),target=join(root,'target'),artifactDir=join(root,'raw');
