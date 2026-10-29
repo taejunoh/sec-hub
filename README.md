@@ -2,13 +2,13 @@
 
 Run local scans on a project and review results in your browser.
 
-[0.3.0 package](releases/sec-hub-local-0.3.0.tgz) · [Hosted CI passed](verification/ci-after-budget-2026-10-28/REPORT.md)
+[CLI 0.3.0 package](releases/sec-hub-local-0.3.0.tgz) · [Hosted CI passed](verification/ci-after-budget-2026-10-28/REPORT.md)
 
 ## Choose a path
 
 | If you want to… | Start here |
 | --- | --- |
-| Browse saved results without commands | [Desktop viewer release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0) (downloads will appear after final checks). |
+| Browse saved results without commands | [Download the desktop viewer](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0) (private repository; GitHub sign-in and access required). |
 | See what a report looks like | [Download sample report](https://github.com/taejunoh/sec-hub/raw/refs/heads/main/docs/sample-report.html) |
 | Scan a project you own | [First scan](#scan-your-project-on-macos-or-linux) on macOS or Linux. |
 

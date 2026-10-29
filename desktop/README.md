@@ -2,10 +2,12 @@
 
 Open saved Sec Hub results in a desktop window. This app does not run scans.
 
-The [desktop 0.1.0 release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0) is planned to host the downloads after final package checks. The ZIP filenames will be:
+Download the prerelease ZIP for your computer from the [desktop 0.1.0 release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0):
 
-- macOS Apple silicon (arm64): `sec-hub-desktop-0.1.0-darwin-arm64-prerelease.zip`
-- Windows PC (x64): `sec-hub-desktop-0.1.0-win32-x64-prerelease.zip`
+This repository is private. You need to sign in to GitHub with an account that has access.
+
+- macOS Apple silicon (arm64): [Download ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.1.0/sec-hub-desktop-0.1.0-darwin-arm64-prerelease.zip) (`sec-hub-desktop-0.1.0-darwin-arm64-prerelease.zip`)
+- Windows PC (x64): [Download ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.1.0/sec-hub-desktop-0.1.0-win32-x64-prerelease.zip) (`sec-hub-desktop-0.1.0-win32-x64-prerelease.zip`)
 
 ## Use the app
 
