@@ -1,3 +1,4 @@
+import {createAnthropicRegistration,verifyStagedRegistration,validateAnthropicRegistration,registrationFiles} from './anthropic-registration.mjs';
 // Trusted parent supervisor: models never write this wrapper's retained manifest.
 // Native descendants inherit the core wrapper process group; its wall timeout kills all.
 import { spawn, execFile } from 'node:child_process';
@@ -49,13 +50,17 @@ async function main(){
   if(inside(cfg.artifactDir,stage)||inside(cfg.target,stage))throw new Error('Execution source staging must be outside target and raw artifacts');
   const copy=join(stage,'target'),runner=join(stage,'runner'),output=join(runner,'audit');await mkdir(runner,{mode:0o700});await mkdir(output,{mode:0o700});
   let copyBefore;try{await copySources(cfg.target,copy,inputs);copyBefore=await sourceManifest(copy);}catch(error){await rm(stage,{recursive:true,force:true});throw error;}
-  const manifest={schema:'sec-hub.native-agent/v1',id:cfg.id,source:SOURCES[cfg.id],sourceCommit:PINS[cfg.id],nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,instructions,model:options.model,backend:cfg.id==='cloudflare'?'codex':'claude',...(cfg.id==='cloudflare'?{strategy:options.strategy}:{}),mode:cfg.id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',target:resolve(cfg.target),copyTarget:copy,inputs,copyBefore,startedAt:new Date().toISOString(),status:'incomplete',reasons:[],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
+  const manifest={schema:'sec-hub.native-agent/v1',id:cfg.id,...(cfg.id==='anthropic'?{invocationPolicyVersion:2}:{}),source:SOURCES[cfg.id],sourceCommit:PINS[cfg.id],nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,instructions,model:options.model,backend:cfg.id==='cloudflare'?'codex':'claude',...(cfg.id==='cloudflare'?{strategy:options.strategy}:{}),mode:cfg.id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',target:resolve(cfg.target),copyTarget:copy,inputs,copyBefore,startedAt:new Date().toISOString(),status:'incomplete',reasons:[],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
   try{
     checkInterrupted();let args,cwd,prompt='';
     if(cfg.id==='cloudflare'){
       await mkdir(join(runner,'.agents/skills'),{recursive:true,mode:0o700});await symlink(join(options.skillRoot,'skills/security-audit'),join(runner,'.agents/skills/security-audit'),'dir');
       args=codexArgs(runner,options);cwd=runner;prompt=cloudflarePrompt(copy,output,options);
-    }else{args=claudeArgs(copy,options,cfg,inputs);cwd=options.skillRoot;}
+    }else{
+      manifest.skillRegistration=await createAnthropicRegistration(copy,options.skillRoot,instructions,cfg.artifactDir);
+      for(const file of registrationFiles)manifest.preRedactionHashes[file]=sha256(await safeRead(join(cfg.artifactDir,file)));
+      args=claudeArgs(copy,options,cfg,inputs,2);cwd=options.skillRoot;
+    }
     manifest.invocation={command:cfg.command,args:[...cfg.args,...args],cwd};
     if(prompt)manifest.promptSha256=sha256(prompt);
     const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:stage,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1',CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD:'0'};
@@ -67,7 +72,7 @@ async function main(){
     const result=await run(cfg.command,[...cfg.args,...args],{cwd,env,prompt,artifactDir:cfg.artifactDir,onEvent});
     for(const file of ['native-events.jsonl','native-stderr.log'])manifest.preRedactionHashes[file]=sha256(await safeRead(join(cfg.artifactDir,file)));
     manifest.process={exitCode:result.exitCode,interrupted:result.interrupted,outputLimitExceeded:result.outputLimitExceeded};
-    const events=result.stdout.split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));manifest.nativeEvidence=inspectNativeEvents(cfg.id,events,{...options,copyTarget:copy,exitCode:result.exitCode});manifest.reasons.push(...manifest.nativeEvidence.reasons);
+    const events=result.stdout.split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));manifest.nativeEvidence=inspectNativeEvents(cfg.id,events,{...options,copyTarget:copy,exitCode:result.exitCode,...(cfg.id==='anthropic'?{invocationPolicyVersion:2,registrationValidated:true}:{})});manifest.reasons.push(...manifest.nativeEvidence.reasons);
     if(result.exitCode!==0||interrupted||result.outputLimitExceeded)manifest.reasons.push('Native process did not succeed');
     for(const file of OUTPUTS[cfg.id]){
       try{const data=await safeRead(join(cfg.id==='cloudflare'?output:copy,file),5*1024*1024);await writeFile(join(cfg.artifactDir,file),data,{flag:'wx',mode:0o600});manifest.preRedactionHashes[file]=sha256(data);}catch{manifest.reasons.push(`Missing or unsafe native output: ${file}`);}
@@ -79,6 +84,10 @@ async function main(){
     }else try{parseAnthropicDocument(JSON.parse((await safeRead(join(cfg.artifactDir,'VULN-FINDINGS.json'))).toString()),{copyTarget:copy,inputs,artifactDir:cfg.artifactDir});}catch(error){manifest.reasons.push(error.message);}
   }catch(error){manifest.reasons.push(error.message);}
   finally{
+    if(cfg.id==='anthropic'&&manifest.skillRegistration)try{
+      manifest.skillRegistration.finalFiles=await verifyStagedRegistration(copy);
+      await validateAnthropicRegistration(manifest.skillRegistration,copy,options.skillRoot,instructions,cfg.artifactDir);
+    }catch(error){manifest.reasons.push(error.message);}
     try{
       manifest.originalAfter=await sourceManifest(cfg.target);const after=await sourceManifest(copy);
       const allowedNew=cfg.id==='anthropic'?OUTPUTS.anthropic:[];

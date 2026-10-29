@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { resolve, join, dirname, isAbsolute } from 'node:path';
 import { createRedactor, redactValue } from './redaction.mjs';
 
-const VERSION='0.3.0';
+const VERSION='0.3.1';
 const HELP=`Sec Hub ${VERSION} — local security scanner orchestration
 
 Usage:

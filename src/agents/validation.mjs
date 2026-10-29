@@ -1,3 +1,4 @@
+import {ANTHROPIC_SKILL,registrationFiles,validateAnthropicRegistration,anthropicPolicyVersion} from './anthropic-registration.mjs';
 import { constants } from 'node:fs';
 import { open, readdir, lstat, mkdir, writeFile } from 'node:fs/promises';
 import { join, relative, resolve, isAbsolute } from 'node:path';
@@ -152,9 +153,20 @@ export function inspectNativeEvents(id,events,options={}){
     return {complete:!reasons.length,reasons,terminalReason,terminalOutcome,roles,spawnCount:ids.length,completedAgentIds:[...states],phaseOrder:phases,instructionRead,verifierThreadIds:roles.verifier};
   }
   const content=events.flatMap(e=>e.message?.content??[]);
-  const activations=content.filter(c=>c.type==='tool_use'&&c.name==='Skill'&&['vuln-scan','/vuln-scan'].includes(c.input?.skill));
-  const targetMatches=args=>{const tokens=(args??'').match(/"(?:[^"\\]|\\.)*"|'[^']*'|[^\s]+/g)??[];let first=tokens[0];if(first?.startsWith('"'))try{first=JSON.parse(first);}catch{return false;}else if(first?.startsWith("'"))first=first.slice(1,-1);return !options.copyTarget||first===options.copyTarget;};
-  const loaded=activations.filter(a=>targetMatches(a.input.args)&&typeof a.input.args==='string'&&/(?:^|\s)--single(?:\s|$)/.test(a.input.args)&&/(?:^|\s)--no-score(?:\s|$)/.test(a.input.args)&&content.some(c=>c.type==='tool_result'&&c.tool_use_id===a.id&&c.is_error!==true));
+  const policy=options.invocationPolicyVersion??1;
+  if(![1,2].includes(policy))reasons.push('Unsupported Anthropic invocation policy version');
+  if(policy===2&&options.registrationValidated!==true)reasons.push('Missing validated Anthropic skill registration');
+  const skillCalls=(policy===2?events.filter(e=>e.type==='assistant').flatMap(e=>e.message?.content??[]):content).filter(c=>c.type==='tool_use'&&c.name==='Skill');
+  if(policy===2&&skillCalls.some(c=>c.input?.skill!==ANTHROPIC_SKILL))reasons.push('Unexpected native registered Skill identity');
+  const activations=skillCalls.filter(c=>policy===2?c.input?.skill===ANTHROPIC_SKILL:['vuln-scan','/vuln-scan'].includes(c.input?.skill));
+  const activationSucceeded=a=>{
+    if(policy!==2)return content.some(c=>c.type==='tool_result'&&c.tool_use_id===a.id&&c.is_error!==true);
+    const start=events.findIndex(e=>e.type==='assistant'&&Array.isArray(e.message?.content)&&e.message.content.includes(a));
+    const results=events.flatMap((e,index)=>e.type==='user'&&Array.isArray(e.message?.content)?e.message.content.filter(c=>c.type==='tool_result'&&c.tool_use_id===a.id).map(c=>({result:c,index})):[]);
+    return typeof a.id==='string'&&a.id.length>0&&skillCalls.filter(c=>c.id===a.id).length===1&&results.length===1&&results[0].index>start&&[undefined,false].includes(results[0].result.is_error);
+  };
+  const targetMatches=args=>{const tokens=(args??'').match(/"(?:[^"\\]|\\.)*"|'[^']*'|[^\s]+/g)??[];let first=tokens[0];if(first?.startsWith('"'))try{first=JSON.parse(first);}catch{return false;}else if(first?.startsWith("'"))first=first.slice(1,-1);return (!options.copyTarget||first===options.copyTarget)&&(policy!==2||tokens.length===3&&tokens.slice(1).sort().join(' ')==='--no-score --single');};
+  const loaded=activations.filter(a=>targetMatches(a.input.args)&&typeof a.input.args==='string'&&/(?:^|\s)--single(?:\s|$)/.test(a.input.args)&&/(?:^|\s)--no-score(?:\s|$)/.test(a.input.args)&&activationSucceeded(a));
   if(!loaded.length)reasons.push('Missing successful native vuln-scan Skill activation');
   const results=events.filter(e=>e.type==='result'),last=results.at(-1);
   if(!last||last.subtype!=='success'||last.is_error!==false||results.some(e=>e.is_error===true||e.subtype!=='success'))reasons.push('Native Claude terminal result did not succeed');
@@ -253,7 +265,7 @@ export async function finalizeNativeExecution(id,ctx){
   const manifestFile=join(ctx.artifactDir,'execution-manifest.json');
   const bytes=await safeRead(manifestFile);if(sha256(bytes)!==expected)throw new Error('Trusted native manifest changed during redaction');
   const manifest=JSON.parse(bytes.toString()),hashes={};
-  for(const name of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log'])hashes[name]=sha256(await safeRead(join(ctx.artifactDir,name)));
+  for(const name of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log',...(id==='anthropic'&&anthropicPolicyVersion(manifest)===2?registrationFiles:[])])hashes[name]=sha256(await safeRead(join(ctx.artifactDir,name)));
   manifest.finalRetainedHashes=hashes;manifest.finalHashScope='retained bytes after redaction';
   await atomicWriteFile(manifestFile,`${JSON.stringify(manifest,null,2)}\n`);prevalidated.delete(key);
   return validateNativeExecution(id,ctx);
@@ -268,21 +280,23 @@ export async function validateNativeExecution(id,ctx){
   if(id==='cloudflare'&&(manifest.strategy??'native-collab')!==options.strategy)throw new Error('cloudflare: native execution strategy differs');
   if(manifest.model!==options.model||manifest.backend!==(id==='cloudflare'?'codex':'claude')||manifest.mode!==(id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan')||!text(manifest.backendVersion)||manifest.invocation?.command!==ctx.config.tools[id].command||!Array.isArray(manifest.invocation.args)||!sameInputs(manifest.invocation.args.slice(0,(ctx.config.tools[id].args??[]).length),ctx.config.tools[id].args??[]))throw new Error(`${id}: native backend configuration differs`);
   if(!text(manifest.nativeNodeExecutable)||!isAbsolute(manifest.nativeNodeExecutable)||/[\x00-\x1f\x7f]/.test(manifest.nativeNodeExecutable)||!/^\d+\.\d+\.\d+/.test(manifest.nativeNodeVersion??'')||Number.parseInt(manifest.nativeNodeVersion)<22)throw new Error(`${id}: missing or invalid native Node runtime evidence`);
-  const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs);
+  const policy=id==='anthropic'?anthropicPolicyVersion(manifest):undefined;
+  const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs,policy);
   if(manifest.invocation.cwd!==(id==='cloudflare'?runner:options.skillRoot)||!sameInputs(manifest.invocation.args,[...(ctx.config.tools[id].args??[]),...expectedArgs])||(id==='cloudflare'&&manifest.promptSha256!==sha256(cloudflarePrompt(manifest.copyTarget,join(runner,'audit'),options))))throw new Error(`${id}: native invocation does not match trusted policy`);
   const instructions=await verifySourcePin(id,options,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true});if(!sameInputs(instructions,manifest.instructions))throw new Error(`${id}: official instruction hashes differ`);
+  if(id==='anthropic'&&policy===2)await validateAnthropicRegistration(manifest.skillRegistration,manifest.copyTarget,options.skillRoot,instructions,ctx.artifactDir);
   const current=await sourceManifest(ctx.target);if(!sameInputs(current,manifest.inputs)||!sameInputs(manifest.inputs,manifest.copyBefore)||!sameInputs(manifest.inputs,manifest.copyAfter)||!sameInputs(manifest.inputs,manifest.originalAfter))throw new Error(`${id}: source preservation failed`);
   const events=(await safeRead(join(ctx.artifactDir,'native-events.jsonl'))).toString().split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));
-  const native=inspectNativeEvents(id,events,{...options,copyTarget:manifest.copyTarget,exitCode:manifest.process?.exitCode});const retainedHashes={};
+  const native=inspectNativeEvents(id,events,{...options,copyTarget:manifest.copyTarget,exitCode:manifest.process?.exitCode,...(id==='anthropic'?{invocationPolicyVersion:policy,registrationValidated:policy===2}:{})});const retainedHashes={};
   const missing=[];
-  for(const file of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log']){try{const data=await safeRead(join(ctx.artifactDir,file));retainedHashes[file]=sha256(data);}catch{missing.push(file);}}
+  for(const file of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log',...(id==='anthropic'&&policy===2?registrationFiles:[])]){try{const data=await safeRead(join(ctx.artifactDir,file));retainedHashes[file]=sha256(data);}catch{missing.push(file);}}
   if(missing.length){
     const error=new Error(`${id}: native workflow incomplete: ${native.terminalReason??native.reasons[0]??'Native output is missing or unsafe'}; missing or unsafe outputs: ${missing.join(', ')}`);
     error.findings=[];
     if(id==='anthropic'&&!missing.includes('VULN-FINDINGS.json'))try{error.findings=parseAnthropicDocument(JSON.parse((await safeRead(join(ctx.artifactDir,'VULN-FINDINGS.json'))).toString()),{copyTarget:manifest.copyTarget,inputs:manifest.inputs,artifactDir:ctx.artifactDir});}catch{}
     throw error;
   }
-  const sealed=manifest.finalRetainedHashes??manifest.preRedactionHashes;if(!sealed||Object.entries(retainedHashes).some(([name,hash])=>sealed[name]!==hash))throw new Error(`${id}: retained native evidence hashes differ`);
+  const sealed=manifest.finalRetainedHashes??manifest.preRedactionHashes;if(!sealed||(id==='anthropic'&&policy===2&&!sameInputs(Object.keys(sealed).sort(),Object.keys(retainedHashes).sort()))||Object.entries(retainedHashes).some(([name,hash])=>sealed[name]!==hash))throw new Error(`${id}: retained native evidence hashes differ`);
   let findings=[],validators=[];const reasons=[...native.reasons];
   if(id==='cloudflare'){
     validators=await runOfficialValidators(options,ctx.artifactDir,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true});if(validators.some(x=>x.exitCode!==0))reasons.push('Official native validator failed');

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { nativeAgentAdapters } from '../src/agents/index.mjs';
 import { inspectNativeEvents, parseAnthropicDocument, sourceManifest, copySources } from '../src/agents/validation.mjs';
-import { mkdtemp, writeFile, mkdir, symlink, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, mkdir, symlink, rm, readFile, cp } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,6 +21,8 @@ test('Anthropic wrapper passes the caller USER to native Claude without forwardi
   const root=await mkdtemp(join(tmpdir(),'native-user-env-test-'));t.after(()=>rm(root,{recursive:true,force:true}));
   for(const path of ['target','artifacts','work','skill'])await mkdir(join(root,path));
   await writeFile(join(root,'target/source.txt'),'fixture');
+  await mkdir(join(root,'skill/.claude/skills/vuln-scan'),{recursive:true});
+  await cp(fileURLToPath(new URL('./fixtures/anthropic-registration/SKILL.md',import.meta.url)),join(root,'skill/.claude/skills/vuln-scan/SKILL.md'));
   const wrapper=fileURLToPath(new URL('../src/agents/native-wrapper.mjs',import.meta.url));
   const capture=join(root,'capture.jsonl'),fake=join(root,'fake-claude.mjs'),loader=join(root,'loader.mjs');
   await writeFile(fake,`import {writeFile} from 'node:fs/promises';const record=process.argv[2];const version=process.argv.includes('--version');await writeFile(record,JSON.stringify({version,user:process.env.USER,keys:Object.keys(process.env)})+'\\n',{flag:'a'});if(version)console.log('fixture claude 1');else console.log('{}');`);
@@ -30,7 +32,7 @@ test('Anthropic wrapper passes the caller USER to native Claude without forwardi
     export function nativeOptions(id,value){return value};export async function safeRead(){return Buffer.from('{}')};export function sha256(){return 'fixture'};
     export async function sourceManifest(root){const data=await readFile(root+'/source.txt');return [{path:'source.txt',size:data.length,sha256:'fixture',lines:1}]};
     export async function copySources(source,copy){await mkdir(copy);await copyFile(source+'/source.txt',copy+'/source.txt')};export function sameInputs(){return true};
-    export function inspectNativeEvents(){return {reasons:[]}};export function verifyCloudflareRecords(){return []};export async function verifySourcePin(){return []};export async function runOfficialValidators(){return []};export function parseAnthropicDocument(){return []};
+    export function inspectNativeEvents(){return {reasons:[]}};export function verifyCloudflareRecords(){return []};export async function verifySourcePin(){return [{path:'.claude/skills/vuln-scan/SKILL.md',sha256:'49e44d80ef199e695cae11801bb4f38d5efc15bcd7e5b5522116c977c77e2405'}]};export async function runOfficialValidators(){return []};export function parseAnthropicDocument(){return []};
   `;
   await writeFile(loader,`const source=${JSON.stringify(validation)};export async function resolve(specifier,context,next){if(specifier==='./validation.mjs'&&context.parentURL?.endsWith('/native-wrapper.mjs'))return {url:'fixture:validation',shortCircuit:true};return next(specifier,context)}export async function load(url,context,next){if(url==='fixture:validation')return {format:'module',source,shortCircuit:true};return next(url,context)}`);
   const user='trusted-caller-user',secrets={ANTHROPIC_API_KEY:'synthetic-api-key',ANTHROPIC_AUTH_TOKEN:'synthetic-auth-token',CLAUDE_CODE_OAUTH_TOKEN:'synthetic-oauth-token',CLAUDE_CONFIG_DIR:'/synthetic/claude-config',CLAUDE_CODE_HOST_CREDS_FILE:'/synthetic/host-creds'};
