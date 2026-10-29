@@ -2,9 +2,9 @@
 
 Use the [README quick start](../README.md) for a first scan. This page keeps the advanced CLI, dashboard, integration, and security details for operators and reviewers. Shell examples are run from the repository root unless stated otherwise. The older README's nested `cd outputs/sec-hub` example applied only to one development workspace and is not a setup step for a fresh checkout.
 
-Anthropic execution remains deferred. The Anthropic options below describe the existing CLI capability and are not evidence of a current Anthropic run.
+The [October 29 seven-tool validation](../verification/seven-tools-validation-2026-10-29/REPORT.md) records a completed Anthropic `/vuln-scan --single --no-score` static run and strict 7/7 aggregation. Its one high-severity result remains a candidate; dynamic verification was not performed. CLI 0.3.1 source tests, artifact QA, and all six hosted CI jobs passed. The final offline package/archive smoke remains pending.
 
-The current 0.3.0 hosted CI run validates a six-job platform/runtime matrix; it does not mean six security-tool integrations were scanned. Package smoke uses synthetic execution, with no provider calls. See the [latest CI report](../verification/ci-after-budget-2026-10-28/REPORT.md).
+The 0.3.0 hosted CI run validates a six-job platform/runtime matrix; it does not mean six security-tool integrations were scanned. Its package smoke uses synthetic execution, with no provider calls. See the [0.3.0 CI report](../verification/ci-after-budget-2026-10-28/REPORT.md) for that historical result.
 
 ## Product behavior and safety
 

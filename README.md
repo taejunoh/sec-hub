@@ -2,7 +2,7 @@
 
 Run local scans on a project and review results in your browser.
 
-[CLI 0.3.0 package](releases/sec-hub-local-0.3.0.tgz) · [Hosted CI passed](verification/ci-after-budget-2026-10-28/REPORT.md)
+[CLI 0.3.1 package](releases/sec-hub-local-0.3.1.tgz) · [Seven-tool validation](verification/seven-tools-validation-2026-10-29/REPORT.md) · [0.3.1 hosted CI](https://github.com/taejunoh/sec-hub/actions/runs/40961337281)
 
 ## Choose a path
 
@@ -77,7 +77,7 @@ A scan that exits **1** completed with findings; it did not fail. Exit **0** mea
 
 - [Release and verification history](docs/HISTORY.md): earlier versions and their evidence.
 
-- [Latest CI report](verification/ci-after-budget-2026-10-28/REPORT.md): per-platform results for the latest successful run.
+- [CI and integration validation](verification/seven-tools-validation-2026-10-29/REPORT.md): current per-platform results and seven-tool evidence.
 
 This quick start uses OSV only. Other tools may need credentials or upload code.
-Anthropic remains deferred; read the technical reference before enabling them.
+Anthropic completed a static validation in the linked seven-tool report. Read the technical reference for its coverage limits before enabling it.
