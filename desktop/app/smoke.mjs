@@ -41,6 +41,17 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     summary.webPreferences = { sandbox: preferences.sandbox, contextIsolation: preferences.contextIsolation, nodeIntegration: preferences.nodeIntegration };
     summary.checks.securityPreferences = preferences.sandbox === true && preferences.contextIsolation === true && preferences.nodeIntegration === false && preferences.webSecurity === true && !preferences.preload;
     const inspectRenderer = () => window.webContents.executeJavaScript(`(async () => ({ readyState: document.readyState, rows: document.querySelector('#artifact-list')?.children.length ?? 0, catalog: await (await fetch('/api/catalog')).json(), executionStatus: (await fetch('/api/execution')).status }))()`);
+    const inspectNativeTitle = async (expected) => {
+      const changeTitle = async (script) => {
+        const changed = new Promise((resolve) => window.once('page-title-updated', () => setImmediate(resolve)));
+        const document = await window.webContents.executeJavaScript(script);
+        await bounded(changed, 3000, 'renderer_title_event_missing');
+        return { document, native: window.getTitle() };
+      };
+      const english = await changeTitle(`(() => { const select = document.querySelector('#language-select'); select.value = 'en'; select.dispatchEvent(new Event('change', { bubbles: true })); return { language: document.documentElement.lang, selection: select.value, title: document.title }; })()`);
+      const changed = await changeTitle(`document.title = 'SEC HUB / Smoke document title'`);
+      return { expected, afterLanguage: english.native, afterDocumentTitle: changed.native, englishDocument: english.document, preserved: english.native === expected && changed.native === expected && english.document.language === 'en' && english.document.selection === 'en' && english.document.title === 'SEC HUB / Developer Workbench' };
+    };
     let renderer;
     await bounded((async () => {
       while (true) {
@@ -54,6 +65,8 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     summary.checks.rendererLoad = domLoaded() && ['interactive', 'complete'].includes(renderer.readyState) && renderer.rows > 0;
     summary.checks.catalog = count > 0 && renderer.executionStatus === 404;
     summary.checks.executionUnavailable = renderer.executionStatus === 404;
+    summary.nativeTitles = { example: await inspectNativeTitle('Sec Hub — Example data · No new scan') };
+    summary.checks.rendererLoad &&= summary.nativeTitles.example.preserved;
     const initial = controller.current.url;
     const selected = path.join(directory, 'controlled-results');
     await fs.mkdir(selected, { mode: 0o700 });
@@ -62,6 +75,8 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     const switched = await actions.openSavedResults();
     const after = await inspectRenderer();
     summary.checks.folderSwitch = switched === true && controller.current.url !== initial && controller.current.example === false && after.catalog.artifacts.some((item) => item.state === 'ready') && after.executionStatus === 404 && await portClosed(initial);
+    summary.nativeTitles.savedResults = await inspectNativeTitle('Sec Hub — Saved results');
+    summary.checks.folderSwitch &&= summary.nativeTitles.savedResults.preserved;
     const secondEvent = secondInstance();
     secondary = spawn(process.execPath, ['--sec-hub-smoke', '--sec-hub-smoke-secondary'], { env: process.env, stdio: 'ignore', windowsHide: true });
     secondaryExit = new Promise((resolve, reject) => {

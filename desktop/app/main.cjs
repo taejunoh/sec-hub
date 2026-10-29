@@ -105,7 +105,7 @@ if (!hasLock) {
     contents.on('will-attach-webview', (event) => event.preventDefault());
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
     contents.on('dom-ready', () => { loaded = true; });
-    contents.on('page-title-updated', (event) => event.preventDefault());
+    window.on('page-title-updated', (event) => event.preventDefault());
     contents.on('render-process-gone', () => { void friendlyFailure(); });
     controller = createViewerController({
       sampleRuns: path.join(__dirname, 'sample', 'example'),
