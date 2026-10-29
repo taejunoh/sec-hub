@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { nativeAgentAdapters } from '../src/agents/index.mjs';
 import { inspectNativeEvents, parseAnthropicDocument, sourceManifest, copySources } from '../src/agents/validation.mjs';
 import { mkdtemp, writeFile, mkdir, symlink, rm, readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 test('native registry uses isolated wrappers and explicit agent configurations', () => {
   assert.deepEqual(nativeAgentAdapters.map(x=>x.id), ['cloudflare','anthropic']);
@@ -13,6 +16,34 @@ test('native registry uses isolated wrappers and explicit agent configurations',
   const invocation=adapter.build({target:'/target',artifactDir:'/raw',config:{tools:{cloudflare:{command:'/native',args:[],agentOptions:{skillRoot:'/skill',workRoot:'/work',revision:'c1c8a8c1471069fb0e188eeaff69b8e8db6564a8',model:'model'}}}}});
   assert.equal(invocation.command,process.execPath);
   assert.equal(JSON.parse(invocation.args[1]).command,'/native');
+});
+test('Anthropic wrapper passes the caller USER to native Claude without forwarding credentials',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'native-user-env-test-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  for(const path of ['target','artifacts','work','skill'])await mkdir(join(root,path));
+  await writeFile(join(root,'target/source.txt'),'fixture');
+  const wrapper=fileURLToPath(new URL('../src/agents/native-wrapper.mjs',import.meta.url));
+  const capture=join(root,'capture.jsonl'),fake=join(root,'fake-claude.mjs'),loader=join(root,'loader.mjs');
+  await writeFile(fake,`import {writeFile} from 'node:fs/promises';const record=process.argv[2];const version=process.argv.includes('--version');await writeFile(record,JSON.stringify({version,user:process.env.USER,keys:Object.keys(process.env)})+'\\n',{flag:'a'});if(version)console.log('fixture claude 1');else console.log('{}');`);
+  const validation=`
+    import {copyFile,mkdir,readFile} from 'node:fs/promises';
+    export const PINS={anthropic:'fixture'},SOURCES={anthropic:'fixture'},OUTPUTS={anthropic:[]};
+    export function nativeOptions(id,value){return value};export async function safeRead(){return Buffer.from('{}')};export function sha256(){return 'fixture'};
+    export async function sourceManifest(root){const data=await readFile(root+'/source.txt');return [{path:'source.txt',size:data.length,sha256:'fixture',lines:1}]};
+    export async function copySources(source,copy){await mkdir(copy);await copyFile(source+'/source.txt',copy+'/source.txt')};export function sameInputs(){return true};
+    export function inspectNativeEvents(){return {reasons:[]}};export function verifyCloudflareRecords(){return []};export async function verifySourcePin(){return []};export async function runOfficialValidators(){return []};export function parseAnthropicDocument(){return []};
+  `;
+  await writeFile(loader,`const source=${JSON.stringify(validation)};export async function resolve(specifier,context,next){if(specifier==='./validation.mjs'&&context.parentURL?.endsWith('/native-wrapper.mjs'))return {url:'fixture:validation',shortCircuit:true};return next(specifier,context)}export async function load(url,context,next){if(url==='fixture:validation')return {format:'module',source,shortCircuit:true};return next(url,context)}`);
+  const user='trusted-caller-user',secrets={ANTHROPIC_API_KEY:'synthetic-api-key',ANTHROPIC_AUTH_TOKEN:'synthetic-auth-token',CLAUDE_CODE_OAUTH_TOKEN:'synthetic-oauth-token',CLAUDE_CONFIG_DIR:'/synthetic/claude-config',CLAUDE_CODE_HOST_CREDS_FILE:'/synthetic/host-creds'};
+  const nativeNode=process.env.PATH.split(':').map(path=>join(path,'node')).find(path=>{try{return statSync(path).isFile()}catch{return false}});assert.ok(nativeNode);
+  const config={id:'anthropic',command:nativeNode,args:[fake,capture],target:join(root,'target'),artifactDir:join(root,'artifacts'),agentOptions:{skillRoot:join(root,'skill'),workRoot:join(root,'work'),revision:'d3bea6b5793b5f3d59a75ebe69a58efa88383145',model:'fixture'}};
+  const child=spawn(process.execPath,['--experimental-loader',loader,wrapper,JSON.stringify(config)],{env:{...process.env,USER:user,...secrets},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';
+  child.stdout.setEncoding('utf8').on('data',chunk=>stdout+=chunk);child.stderr.setEncoding('utf8').on('data',chunk=>stderr+=chunk);
+  const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve)});
+  const manifest=await readFile(join(root,'artifacts/execution-manifest.json'),'utf8').then(JSON.parse);
+  assert.equal(code,0,`${stderr}${stdout} ${JSON.stringify(manifest.reasons)}`);
+  const calls=(await readFile(capture,'utf8')).trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(calls.map(call=>call.version),[true,false]);
+  for(const call of calls){assert.equal(call.user,user);for(const name of Object.keys(secrets))assert.equal(call.keys.includes(name),false,`${name} was forwarded`);}
 });
 const cfEvents=()=>[
   {type:'thread.started',thread_id:'parent'},

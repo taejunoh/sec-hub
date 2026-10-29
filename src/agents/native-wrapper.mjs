@@ -60,6 +60,7 @@ async function main(){
     if(prompt)manifest.promptSha256=sha256(prompt);
     const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:stage,LANG:'en_US.UTF-8',CLAUDE_CODE_DISABLE_AUTO_MEMORY:'1',CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD:'0'};
     // Native backends discover their existing login internally. No credential material is read or copied.
+    if(cfg.id==='anthropic'&&process.env.USER)env.USER=process.env.USER;
     if(cfg.id==='cloudflare'&&process.env.CODEX_HOME)env.CODEX_HOME=process.env.CODEX_HOME;
     checkInterrupted();const version=await execute(cfg.command,[...cfg.args,'--version'],{cwd,env,timeout:10000,maxBuffer:64*1024,signal:cancellation.signal});manifest.backendVersion=(version.stdout||version.stderr).trim().slice(0,500);
     let spawns=0;const onEvent=event=>{if(cfg.id==='cloudflare'&&event.type==='item.completed'&&event.item?.type==='collab_tool_call'&&event.item.tool==='spawn_agent'&&event.item.status==='completed'){spawns+=(event.item.receiver_thread_ids??[]).length;if(spawns>options.maxAgents){manifest.reasons.push('Native delegation budget exceeded');active?.kill('SIGTERM');}}};
