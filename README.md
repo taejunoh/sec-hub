@@ -8,6 +8,7 @@ Run local scans on a project and review results in your browser.
 
 | If you want to… | Start here |
 | --- | --- |
+| Browse saved results without commands | [Desktop viewer release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0) (downloads will appear after final checks). |
 | See what a report looks like | [Download sample report](https://github.com/taejunoh/sec-hub/raw/refs/heads/main/docs/sample-report.html) |
 | Scan a project you own | [First scan](#scan-your-project-on-macos-or-linux) on macOS or Linux. |
 

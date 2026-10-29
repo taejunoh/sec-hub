@@ -133,3 +133,56 @@ test('smoke refuses a nonempty evidence directory before validating or launching
   await assert.rejects(smoke.smoke({ executable: path.join(dir, 'missing-executable'), out: dir }), /empty/i);
   assert.equal(await readFile(path.join(dir, 'application-stderr.log'), 'utf8'), 'previous evidence');
 });
+
+async function signedMacFixture(t) {
+  const { execFileSync } = await import('node:child_process');
+  const { copyFile, chmod } = await import('node:fs/promises');
+  const dir = await fixture(t); const application = path.join(dir, 'Sec Hub.app');
+  await file(application, 'Contents/Info.plist', '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundleIdentifier</key><string>org.sechub.archive-fixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>');
+  await mkdir(path.join(application, 'Contents/MacOS'), { recursive: true });
+  await copyFile('/usr/bin/true', path.join(application, 'Contents/MacOS/Fixture')); await chmod(path.join(application, 'Contents/MacOS/Fixture'), 0o755);
+  await file(application, 'Contents/Resources/preserved.txt', 'fixture metadata');
+  execFileSync('/usr/bin/xattr', ['-w', 'org.sechub.test-preserved', 'preserved', path.join(application, 'Contents/Resources/preserved.txt')]);
+  execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', '0081;6ae30000;SecHubMetadataFixture;', path.join(application, 'Contents/Resources/preserved.txt')]);
+  execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', application], { stdio: 'pipe' });
+  return { dir, application };
+}
+async function fixtureInventory(root, prefix = '') {
+  const { lstat } = await import('node:fs/promises'); const files = [];
+  for (const name of (await readdir(path.join(root, prefix))).sort()) {
+    const relative = path.join(prefix, name); const info = await lstat(path.join(root, relative));
+    if (info.isDirectory()) files.push(...await fixtureInventory(root, relative));
+    else files.push({ path: relative.split(path.sep).join('/'), type: 'file', size: info.size, mode: (info.mode & 0o777).toString(8), sha256: createHash('sha256').update(await readFile(path.join(root, relative))).digest('hex') });
+  }
+  return files;
+}
+
+test('the actual packing and fresh extraction gate preserves quarantine and unrelated metadata', { skip: process.platform !== 'darwin' }, async t => {
+  assert.equal(typeof build.packAndVerify, 'function', 'the distributable archive must be roundtrip verified');
+  const { execFileSync } = await import('node:child_process');
+  const { dir, application } = await signedMacFixture(t); const expectedFiles = await fixtureInventory(application);
+  const previous = process.env.DITTONORSRC; process.env.DITTONORSRC = '1';
+  let result;
+  try { result = await build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: 'darwin-arm64', expectedFiles }); }
+  finally { if (previous === undefined) delete process.env.DITTONORSRC; else process.env.DITTONORSRC = previous; }
+  t.after(() => rm(result.directory, { recursive: true, force: true }));
+  assert.deepEqual(result.files, expectedFiles);
+  assert.equal(result.verification.macStrictSignature, true);
+  const preserved = path.join(result.application, 'Contents/Resources/preserved.txt');
+  assert.equal(execFileSync('/usr/bin/xattr', ['-p', 'org.sechub.test-preserved', preserved], { encoding: 'utf8' }).trim(), 'preserved');
+  assert.match(execFileSync('/usr/bin/xattr', ['-p', 'com.apple.quarantine', preserved], { encoding: 'utf8' }).trim(), /^0081;/);
+  assert.equal(execFileSync('/usr/bin/xattr', [result.application], { encoding: 'utf8' }).includes('com.apple.FinderInfo'), false);
+});
+
+test('the distributable gate rejects an archive whose extracted bytes differ from the signed inventory', { skip: process.platform !== 'darwin' }, async t => {
+  assert.equal(typeof build.packAndVerify, 'function', 'roundtrip inventory comparison is required');
+  const { dir, application } = await signedMacFixture(t); const expectedFiles = await fixtureInventory(application); expectedFiles[0].sha256 = '0'.repeat(64);
+  await assert.rejects(build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: 'darwin-arm64', expectedFiles }), /inventory/i);
+});
+
+test('the distributable gate rejects invalid attached Finder metadata after extraction without repairing it', { skip: process.platform !== 'darwin' }, async t => {
+  assert.equal(typeof build.packAndVerify, 'function', 'post-extraction signature verification is required');
+  const { execFileSync } = await import('node:child_process'); const { dir, application } = await signedMacFixture(t);
+  execFileSync('/usr/bin/xattr', ['-wx', 'com.apple.FinderInfo', '0000000000000000200000000000000000000000000000000000000000000000', path.join(application, 'Contents/Resources/preserved.txt')]);
+  await assert.rejects(build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: 'darwin-arm64', expectedFiles: await fixtureInventory(application) }), /codesign|Finder|attached/i);
+});

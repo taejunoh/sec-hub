@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
+import { tmpdir } from 'node:os';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appFiles = ['package.json', 'main.cjs', 'controller.mjs', 'policy.mjs', 'smoke.mjs'];
@@ -105,7 +106,9 @@ export async function validateRuntime(root, target) {
 }
 async function run(command, args, { cwd = repository } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const env = { ...process.env };
+    if (command === '/usr/bin/ditto') { delete env.DITTONORSRC; delete env.DITTO_TEST_OPTIONS; }
+    const child = spawn(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let stdout = ''; let stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; process.stderr.write(chunk); });
@@ -133,6 +136,35 @@ async function gitState() {
   return { commit, dirty: status.length > 0, status };
 }
 function psLiteral(value) { return `'${value.replaceAll("'", "''")}'`; }
+async function nativeTemporary(prefix) {
+  const directory = await mkdtemp(path.join(await realpath(tmpdir()), prefix));
+  if (process.platform !== 'win32') await chmod(directory, 0o700);
+  return await realpath(directory);
+}
+async function extractArchive(archive, destination) {
+  if (process.platform === 'darwin') await run('/usr/bin/ditto', ['-x', '-k', '--rsrc', '--extattr', '--acl', '--qtn', archive, destination]);
+  else await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${psLiteral(archive)} -DestinationPath ${psLiteral(destination)}`]);
+}
+export async function packAndVerify({ application, archive, target, expectedFiles }) {
+  if (`${process.platform}-${process.arch}` !== target) throw new Error('Verify archives on the native target');
+  if (target === 'darwin-arm64') await run('/usr/bin/ditto', ['-c', '-k', '--rsrc', '--extattr', '--acl', '--qtn', '--sequesterRsrc', '--keepParent', application, archive]);
+  else await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Compress-Archive -LiteralPath ${psLiteral(application)} -DestinationPath ${psLiteral(archive)} -CompressionLevel Optimal`]);
+  const directory = await nativeTemporary('sec-hub-desktop-roundtrip-');
+  try {
+    await extractArchive(archive, directory);
+    const layout = platformLayout(directory, target);
+    const files = await inventory(layout.application);
+    if (json(files) !== json(expectedFiles)) throw new Error('Extracted archive inventory differs from the final signed file inventory');
+    // This is verification only: never strip metadata or re-sign extracted bytes.
+    let signatureLog = '';
+    if (target === 'darwin-arm64') {
+      const result = await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', layout.application]);
+      signatureLog = result.stdout + result.stderr;
+    }
+    const verification = { status: 'passed', nativeTemporaryExtraction: true, postExtractionMutations: false, inventoryFiles: files.length, inventorySha256: createHash('sha256').update(json(files)).digest('hex'), macStrictSignature: target === 'darwin-arm64', authoritativeDeliverable: 'ZIP verified after fresh extraction in native temporary storage; out/package is a convenience copy derived from that ZIP and may acquire local filesystem metadata' };
+    return { directory, application: layout.application, files, verification, signatureLog };
+  } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
+}
 async function obtainRuntime(cache, pin) {
   await mkdir(cache, { recursive: true });
   const archive = path.join(cache, pin.filename);
@@ -150,8 +182,7 @@ async function obtainRuntime(cache, pin) {
   // Always extract the verified ZIP afresh; a pre-extracted cache is not trusted provenance.
   const extracted = await mkdtemp(path.join(cache, '.verified-extract-'));
   try {
-    if (process.platform === 'darwin') await run('/usr/bin/ditto', ['-x', '-k', archive, extracted]);
-    else await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${psLiteral(archive)} -DestinationPath ${psLiteral(extracted)}`]);
+    await extractArchive(archive, extracted);
     return extracted;
   } catch (error) { await rm(extracted, { recursive: true, force: true }); throw error; }
 }
@@ -192,7 +223,10 @@ export async function build({ target, out, cache, allowDirty = false }) {
   const lock = JSON.parse(await readFile(path.join(repository, 'desktop/runtime-lock.json'), 'utf8'));
   const pin = lock.targets[target];
   const extracted = await obtainRuntime(cache, pin);
-  const stage = path.join(out, 'package'); await mkdir(stage);
+  // Documents/cloud-backed directories can attach FinderInfo during packaging.
+  // Assemble and validate on private native temporary storage instead.
+  const stage = await nativeTemporary('sec-hub-desktop-stage-');
+  let roundtrip;
   try {
     await validateRuntime(extracted, target);
     const layout = platformLayout(stage, target);
@@ -229,14 +263,23 @@ export async function build({ target, out, cache, allowDirty = false }) {
     const files = await inventory(layout.application);
     const basename = `sec-hub-desktop-${appMetadata.version}-${target}-${label}`;
     const archive = path.join(out, `${basename}.zip`);
-    if (target === 'darwin-arm64') await run('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', layout.application, archive]);
-    else await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Compress-Archive -LiteralPath ${psLiteral(layout.application)} -DestinationPath ${psLiteral(archive)} -CompressionLevel Optimal`]);
-    const manifest = { ...metadata, createdAt: new Date().toISOString(), executable: slash(path.relative(out, layout.executable)), application: slash(path.relative(out, layout.application)), finalFiles: files, finalFilesSha256: createHash('sha256').update(json(files)).digest('hex'), archive: { filename: path.basename(archive), size: (await stat(archive)).size, sha256: await hashFile(archive) } };
+    roundtrip = await packAndVerify({ application: layout.application, archive, target, expectedFiles: files });
+    await writeFile(path.join(out, 'archive-verification.json'), json(roundtrip.verification));
+    if (target === 'darwin-arm64') await writeFile(path.join(out, 'archive-codesign-verification.log'), roundtrip.signatureLog);
+    // CI and local smoke launch files freshly extracted from the deliverable.
+    const outputStage = path.join(out, 'package');
+    if (target === 'darwin-arm64') await run('/usr/bin/ditto', [roundtrip.directory, outputStage]);
+    else await cp(roundtrip.directory, outputStage, { recursive: true, dereference: false });
+    const outputLayout = platformLayout(outputStage, target);
+    if (json(await inventory(outputLayout.application)) !== json(files)) throw new Error('Convenience package copy differs from the verified archive inventory');
+    const manifest = { ...metadata, createdAt: new Date().toISOString(), executable: slash(path.relative(out, outputLayout.executable)), application: slash(path.relative(out, outputLayout.application)), finalFiles: roundtrip.files, finalFilesSha256: roundtrip.verification.inventorySha256, archiveVerification: roundtrip.verification, archive: { filename: path.basename(archive), size: (await stat(archive)).size, sha256: await hashFile(archive) } };
     const manifestPath = path.join(out, `${basename}.manifest.json`);
     await writeFile(manifestPath, json(manifest));
     await writeFile(path.join(out, 'SHA256SUMS.txt'), `${manifest.archive.sha256}  ${path.basename(archive)}\n${await hashFile(manifestPath)}  ${path.basename(manifestPath)}\n`);
-    return { archive, manifest: manifestPath, executable: layout.executable, application: layout.application, label, source: source.commit };
-  } finally { await rm(extracted, { recursive: true, force: true }); }
+    return { archive, manifest: manifestPath, executable: outputLayout.executable, application: outputLayout.application, label, source: source.commit };
+  } finally {
+    await Promise.all([extracted, stage, roundtrip?.directory].filter(Boolean).map(directory => rm(directory, { recursive: true, force: true })));
+  }
 }
 function argumentsFor(argv) {
   const options = {};

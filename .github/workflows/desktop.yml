@@ -48,6 +48,8 @@ jobs:
             ${{ runner.temp }}/sec-hub-desktop-build/*.manifest.json
             ${{ runner.temp }}/sec-hub-desktop-build/SHA256SUMS.txt
             ${{ runner.temp }}/sec-hub-desktop-build/codesign-verification.log
+            ${{ runner.temp }}/sec-hub-desktop-build/archive-verification.json
+            ${{ runner.temp }}/sec-hub-desktop-build/archive-codesign-verification.log
             ${{ runner.temp }}/sec-hub-desktop-evidence
           if-no-files-found: error
           retention-days: 7
@@ -96,6 +98,7 @@ jobs:
             ${{ runner.temp }}/sec-hub-desktop-build/*.zip
             ${{ runner.temp }}/sec-hub-desktop-build/*.manifest.json
             ${{ runner.temp }}/sec-hub-desktop-build/SHA256SUMS.txt
+            ${{ runner.temp }}/sec-hub-desktop-build/archive-verification.json
             ${{ runner.temp }}/sec-hub-desktop-evidence
           if-no-files-found: error
           retention-days: 7
