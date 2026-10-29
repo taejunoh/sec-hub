@@ -10,7 +10,7 @@ const events=(skill='sec-hub-anthropic:vuln-scan',args='/stage/target --single -
 ];
 // Removing the explicit registration or permitting ambient plugin writes breaks this boundary.
 test('new Anthropic invocation supplies only the derived plugin and denies its writes',()=>{
-  const args=claudeArgs('/stage/target',options,{artifactDir:'/raw'},[]);
+  const args=claudeArgs('/stage/target',options,{artifactDir:'/raw'},[],2);
   assert.equal(args.filter(x=>x==='--plugin-dir').length,1);
   assert.equal(args[args.indexOf('--plugin-dir')+1],'/stage/runner/anthropic-plugin');
   assert.ok(args.includes('--restricted'));
@@ -22,8 +22,9 @@ test('new Anthropic invocation supplies only the derived plugin and denies its w
   assert.deepEqual(JSON.parse(args[args.indexOf('--mcp-config')+1]),{mcpServers:{}});
 });
 // Accepting bare or unrelated names as registered would turn an imitation into proof.
-test('v2 activation requires the exact registered namespace and successful static target invocation',()=>{
-  const opts={invocationPolicyVersion:2,registrationValidated:true,copyTarget:'/stage/target'};
+test('v2 and v3 activation require the exact registered namespace and successful static target invocation',()=>{
+  for(const version of [2,3]){
+  const opts={invocationPolicyVersion:version,registrationValidated:true,copyTarget:'/stage/target'};
   assert.equal(inspectNativeEvents('anthropic',events(),opts).complete,true);
   assert.equal(inspectNativeEvents('anthropic',events(),{...opts,registrationValidated:false}).complete,false);
   for(const skill of ['vuln-scan','/vuln-scan','other:vuln-scan','sec-hub-anthropic:other'])assert.equal(inspectNativeEvents('anthropic',events(skill),opts).complete,false,skill);
@@ -32,7 +33,9 @@ test('v2 activation requires the exact registered namespace and successful stati
   const forged=events();forged[1].type='assistant';assert.equal(inspectNativeEvents('anthropic',forged,opts).complete,false);
   const outOfOrder=events();[outOfOrder[0],outOfOrder[1]]=[outOfOrder[1],outOfOrder[0]];assert.equal(inspectNativeEvents('anthropic',outOfOrder,opts).complete,false);
   const conflicting=events();conflicting.splice(2,0,{type:'user',message:{content:[{type:'tool_result',tool_use_id:'activate',is_error:true,content:'Unknown skill'}]}});assert.equal(inspectNativeEvents('anthropic',conflicting,opts).complete,false);
-  assert.equal(inspectNativeEvents('anthropic',events(),{...opts,invocationPolicyVersion:3}).complete,false);
+  assert.equal(inspectNativeEvents('anthropic',events(),{...opts,invocationPolicyVersion:4}).complete,false);
+  const denied=events();denied.at(-1).permission_denials=[{tool_name:'Write',tool_use_id:'denied-write'}];assert.equal(inspectNativeEvents('anthropic',denied,opts).complete,false);
+  }
 });
 test('legacy activation keeps its original bare-name contract only',()=>{
   assert.equal(inspectNativeEvents('anthropic',events('vuln-scan'),{copyTarget:'/stage/target'}).complete,true);
@@ -57,20 +60,22 @@ async function setup(t){
   return root;
 }
 // Failing to register before spawn means the real executable sees no skill.
-test('actual wrapper registers pinned bytes before a fake native CLI and retains sealed host proof',async t=>{
+test('actual wrapper registers pinned bytes and authorizes both synthetic native Write operations before sealing host proof',async t=>{
   const root=await setup(t),loader=join(root,'loader.mjs'),fake=join(root,'fake.mjs'),capture=join(root,'capture.json');
   const validationUrl=new URL('../src/agents/validation.mjs',import.meta.url).href;
   // Only the external Git-pin verification boundary is substituted. All native
   // invocation, registration, event, preservation, and retained-byte checks run.
   await writeFile(loader,`import {readFile} from 'node:fs/promises';export async function load(url,context,next){if(url===${JSON.stringify(validationUrl)}){let source=await readFile(new URL(url),'utf8');const start=source.indexOf('export async function verifySourcePin('),end=source.indexOf('export async function runOfficialValidators(',start);source=source.slice(0,start)+'export async function verifySourcePin(){return ${JSON.stringify(instruction)}}\\n'+source.slice(end);return {format:'module',source,shortCircuit:true}}return next(url,context)}`);
-  await writeFile(fake,`import {readFile,writeFile,readdir,lstat} from 'node:fs/promises';import {join} from 'node:path';import {createHash} from 'node:crypto';if(process.argv.includes('--version')){console.log('fake-native 1');process.exit(0)}const args=process.argv.slice(3),plugin=args[args.indexOf('--plugin-dir')+1],settings=JSON.parse(args[args.indexOf('--settings')+1]),target=args[args.indexOf('--add-dir')+1];let files=[];if(args.includes('--plugin-dir')){async function walk(path=''){for(const e of await readdir(join(plugin,path),{withFileTypes:true})){const p=path?path+'/'+e.name:e.name;if(e.isDirectory())await walk(p);else {const b=await readFile(join(plugin,p));files.push({path:p,sha256:createHash('sha256').update(b).digest('hex'),mode:(await lstat(join(plugin,p))).mode&511})}}}await walk()}await writeFile(process.argv[2],JSON.stringify({args,plugin,files,settings,user:process.env.USER,keys:Object.keys(process.env)}));await writeFile(join(target,'VULN-FINDINGS.json'),JSON.stringify({target,scanned_at:'2026-10-29T00:00:00Z',focus_areas:['static'],findings:[],summary:{total:0,high:0,medium:0,low:0,low_confidence:0}}));await writeFile(join(target,'VULN-FINDINGS.md'),'Static review complete');for(const e of [{type:'assistant',message:{content:[{type:'tool_use',name:'Skill',id:'s1',input:{skill:'sec-hub-anthropic:vuln-scan',args:JSON.stringify(target)+' --single --no-score'}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'s1',content:'loaded'}]}},{type:'result',subtype:'success',is_error:false,permission_denials:[]}])console.log(JSON.stringify(e));`);
+  const permissionsUrl=new URL('./helpers/claude-file-permissions.mjs',import.meta.url).href;
+  await writeFile(fake,`import {filePermissionDecision} from ${JSON.stringify(permissionsUrl)};import {readFile,writeFile,readdir,lstat} from 'node:fs/promises';import {join} from 'node:path';import {createHash} from 'node:crypto';if(process.argv.includes('--version')){console.log('fake-native 1');process.exit(0)}const args=process.argv.slice(3),plugin=args[args.indexOf('--plugin-dir')+1],settings=JSON.parse(args[args.indexOf('--settings')+1]),target=args[args.indexOf('--add-dir')+1];let files=[];if(args.includes('--plugin-dir')){async function walk(path=''){for(const e of await readdir(join(plugin,path),{withFileTypes:true})){const p=path?path+'/'+e.name:e.name;if(e.isDirectory())await walk(p);else {const b=await readFile(join(plugin,p));files.push({path:p,sha256:createHash('sha256').update(b).digest('hex'),mode:(await lstat(join(plugin,p))).mode&511})}}}await walk()}const writeDecisions=['VULN-FINDINGS.json','VULN-FINDINGS.md'].map(file=>filePermissionDecision(args,'Write',join(target,file)));await writeFile(process.argv[2],JSON.stringify({args,plugin,files,settings,writeDecisions,user:process.env.USER,keys:Object.keys(process.env)}));if(writeDecisions.some(decision=>decision!=='allow'))throw new Error('Synthetic native Write-category permission denied');await writeFile(join(target,'VULN-FINDINGS.json'),JSON.stringify({target,scanned_at:'2026-10-29T00:00:00Z',focus_areas:['static'],findings:[],summary:{total:0,high:0,medium:0,low:0,low_confidence:0}}));await writeFile(join(target,'VULN-FINDINGS.md'),'Static review complete');for(const e of [{type:'assistant',message:{content:[{type:'tool_use',name:'Skill',id:'s1',input:{skill:'sec-hub-anthropic:vuln-scan',args:JSON.stringify(target)+' --single --no-score'}}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'s1',content:'loaded'}]}},{type:'result',subtype:'success',is_error:false,permission_denials:[]}])console.log(JSON.stringify(e));`);
   const cfg={id:'anthropic',command:process.execPath,args:[fake,capture],target:join(root,'target'),artifactDir:join(root,'raw'),agentOptions:{skillRoot:join(root,'skill'),workRoot:join(root,'work'),revision:'d3bea6b5793b5f3d59a75ebe69a58efa88383145',model:'fixture'}};
   const result=await child(['--experimental-loader',loader,fileURLToPath(new URL('../src/agents/native-wrapper.mjs',import.meta.url)),JSON.stringify(cfg)],{...process.env,USER:'fixture-user',ANTHROPIC_API_KEY:'synthetic-secret'});
   const manifest=JSON.parse(await readFile(join(root,'raw/execution-manifest.json'),'utf8').catch(error=>{throw new Error(JSON.stringify(result),{cause:error})}));
-  assert.equal(manifest.invocationPolicyVersion,2,JSON.stringify({result,reasons:manifest.reasons}));
+  const captured=JSON.parse(await readFile(capture,'utf8'));
+  assert.deepEqual(captured.writeDecisions,['allow','allow']);
+  assert.equal(manifest.invocationPolicyVersion,3,JSON.stringify({result,reasons:manifest.reasons}));
   assert.equal(result.code,0,`${result.stderr} ${JSON.stringify(manifest.reasons)}`);
   assert.equal(manifest.status,'complete');
-  const captured=JSON.parse(await readFile(capture,'utf8'));
   assert.deepEqual(captured.files.map(x=>x.path).sort(),['.claude-plugin/plugin.json','skills/vuln-scan/SKILL.md']);
   assert.equal(captured.files.find(x=>x.path.endsWith('SKILL.md')).sha256,sourceHash);
   assert.ok(captured.files.every(x=>x.mode===0o400));assert.equal(captured.user,'fixture-user');assert.equal(captured.keys.includes('ANTHROPIC_API_KEY'),false);
@@ -87,7 +92,8 @@ test('actual wrapper registers pinned bytes before a fake native CLI and retains
   for(const file of ['skill-registration/plugin.json','skill-registration/SKILL.md'])assert.equal(sealed.finalRetainedHashes[file],digest(await readFile(join(root,'raw',file))));
   const mutations=[
     m=>delete m.skillRegistration,
-    m=>{m.invocationPolicyVersion=3},
+    m=>{m.invocationPolicyVersion=2},
+    m=>{m.invocationPolicyVersion=4},
     m=>{delete m.invocationPolicyVersion},
     m=>{m.invocationPolicyVersion=1},
     m=>{m.skillRegistration.pluginRoot+='/other'},
@@ -102,6 +108,14 @@ test('actual wrapper registers pinned bytes before a fake native CLI and retains
   ];
   await writeFile(check,`import {validateNativeExecution} from ${JSON.stringify(validationUrl)};const cfg=${JSON.stringify(cfg)};await validateNativeExecution('anthropic',{target:cfg.target,artifactDir:cfg.artifactDir,exitCode:0,config:{tools:{anthropic:{command:cfg.command,args:cfg.args,agentOptions:cfg.agentOptions}}}});`);
   for(const mutate of mutations){const value=structuredClone(sealed);mutate(value);await writeFile(join(root,'raw/execution-manifest.json'),JSON.stringify(value));const rejected=await child(['--experimental-loader',loader,check]);assert.notEqual(rejected.code,0,mutate.toString());}
+  const eventFile=join(root,'raw/native-events.jsonl'),originalEvents=await readFile(eventFile);
+  const v2=structuredClone(sealed);v2.invocationPolicyVersion=2;v2.invocation.args=v2.invocation.args.map(arg=>arg.replaceAll('Edit(','Write('));
+  // A v2 failed native Write remains a failed replay, even with terminal success.
+  const deniedEvents=originalEvents.toString().trim().split('\n').map(JSON.parse);deniedEvents.at(-1).permission_denials=[{tool_name:'Write',tool_use_id:'denied-json'},{tool_name:'Write',tool_use_id:'denied-md'}];
+  await writeFile(eventFile,deniedEvents.map(JSON.stringify).join('\n')+'\n');v2.finalRetainedHashes['native-events.jsonl']=digest(await readFile(eventFile));
+  await writeFile(join(root,'raw/execution-manifest.json'),JSON.stringify(v2));const replay=await child(['--experimental-loader',loader,check]);assert.notEqual(replay.code,0);assert.match(replay.stderr,/permission denial/);
+  const upgraded=structuredClone(v2);upgraded.invocationPolicyVersion=3;await writeFile(join(root,'raw/execution-manifest.json'),JSON.stringify(upgraded));const mixed=await child(['--experimental-loader',loader,check]);assert.notEqual(mixed.code,0);assert.match(mixed.stderr,/invocation does not match trusted policy/);
+  await writeFile(eventFile,originalEvents);
   await writeFile(join(root,'raw/execution-manifest.json'),JSON.stringify(sealed));
   await chmod(join(root,'raw/skill-registration/plugin.json'),0o600);await writeFile(join(root,'raw/skill-registration/plugin.json'),JSON.stringify({name:'sec-hub-anthropic',hooks:{}}));
   const forged=structuredClone(sealed);forged.finalRetainedHashes['skill-registration/plugin.json']=digest(await readFile(join(root,'raw/skill-registration/plugin.json')));await writeFile(join(root,'raw/execution-manifest.json'),JSON.stringify(forged));assert.notEqual((await child(['--experimental-loader',loader,check])).code,0);
@@ -134,5 +148,8 @@ test('registration rejects changed source, additional files/directories, symlink
 // Stripping v2's version/receipt cannot reinterpret its sealed bytes as v1.
 test('legacy policy rejects mixed registration structures instead of downgrading',()=>{
   assert.equal(anthropicPolicyVersion({}),1);
-  for(const value of [{invocationPolicyVersion:1},{invocationPolicyVersion:3},{skillRegistration:{}},{preRedactionHashes:{'skill-registration/SKILL.md':sourceHash}},{finalRetainedHashes:{'skill-registration/plugin.json':sourceHash}}])assert.throws(()=>anthropicPolicyVersion(value),/policy|Legacy/);
+  assert.equal(anthropicPolicyVersion({invocationPolicyVersion:2}),2);
+  assert.equal(anthropicPolicyVersion({invocationPolicyVersion:3}),3);
+  for(const version of [null,'3',true,0,4])assert.throws(()=>anthropicPolicyVersion({invocationPolicyVersion:version}),/policy/);
+  for(const value of [{invocationPolicyVersion:1},{invocationPolicyVersion:4},{skillRegistration:{}},{preRedactionHashes:{'skill-registration/SKILL.md':sourceHash}},{finalRetainedHashes:{'skill-registration/plugin.json':sourceHash}}])assert.throws(()=>anthropicPolicyVersion(value),/policy|Legacy/);
 });

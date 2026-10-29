@@ -30,8 +30,8 @@ function expectedReceipt(copy){return {schema:'sec-hub.anthropic-skill-registrat
 export function anthropicPolicyVersion(manifest){
   const version=manifest.invocationPolicyVersion;
   if(version===undefined){if(manifest.skillRegistration!==undefined||[manifest.preRedactionHashes,manifest.finalRetainedHashes].some(hashes=>Object.keys(hashes??{}).some(key=>key.startsWith('skill-registration/'))))throw new Error('Legacy Anthropic policy cannot contain a registration receipt');return 1;}
-  if(version!==2)throw new Error('Unsupported Anthropic invocation policy version');
-  return 2;
+  if(![2,3].includes(version))throw new Error('Unsupported Anthropic invocation policy version');
+  return version;
 }
 async function sourceBytes(skillRoot,instructions){
   if(!instructions.some(x=>x.path===sourceSkillPath&&x.sha256===sourceSkillSha256))throw new Error('Anthropic registration lacks verified pinned instruction');
