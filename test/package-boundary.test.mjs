@@ -36,8 +36,9 @@ test('npm package contains the runnable CLI and excludes repository maintenance 
     await assert.rejects(readFile(join(packageRoot, 'scripts/combine-verified-runs.mjs')));
     await assert.rejects(readFile(join(packageRoot, 'test/helpers/php-header-server.mjs')));
     await assert.rejects(readFile(join(packageRoot, 'test/fixtures/live-five/package.json')));
-    const readme = await readFile(join(packageRoot, 'README.md'), 'utf8');
-    assert.match(readme, /저장소 checkout에서만/);
+    const packagedReadme = await readFile(join(packageRoot, 'README.md'));
+    const sourceReadme = await readFile(join(root, 'README.md'));
+    assert.deepEqual(packagedReadme, sourceReadme);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "id": "SYNTHETIC-EXAMPLE-NOT-A-NEW-SCAN",
+  "startedAt": "2026-10-28T12:00:00.000Z",
+  "endedAt": "2026-10-28T12:00:01.000Z",
+  "target": {
+    "path": "/synthetic-example/project"
+  },
+  "status": "completed",
+  "tools": [
+    {
+      "id": "osv",
+      "selected": true,
+      "status": "completed",
+      "findings": [
+        {
+          "toolId": "osv",
+          "ruleId": "UI-000",
+          "title": "Example dependency advisory",
+          "description": "Synthetic example data for exploring saved results. No new scan has been performed.",
+          "severity": "high",
+          "verification": "candidate",
+          "location": {
+            "path": "/synthetic-example/project/src/example-1.mjs",
+            "line": 1
+          },
+          "references": [],
+          "aliases": []
+        },
+        {
+          "toolId": "osv",
+          "ruleId": "UI-001",
+          "title": "Example configuration review",
+          "description": "Synthetic example data for exploring saved results. No new scan has been performed.",
+          "severity": "medium",
+          "verification": "reported",
+          "location": {
+            "path": "/synthetic-example/project/src/example-2.mjs",
+            "line": 2
+          },
+          "references": [],
+          "aliases": []
+        },
+        {
+          "toolId": "osv",
+          "ruleId": "UI-002",
+          "title": "Example source review",
+          "description": "Synthetic example data for exploring saved results. No new scan has been performed.",
+          "severity": "medium",
+          "verification": "candidate",
+          "location": {
+            "path": "/synthetic-example/project/src/example-3.mjs",
+            "line": 3
+          },
+          "references": [],
+          "aliases": []
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "toolId": "osv",
+      "ruleId": "UI-000",
+      "title": "Example dependency advisory",
+      "description": "Synthetic example data for exploring saved results. No new scan has been performed.",
+      "severity": "high",
+      "verification": "candidate",
+      "location": {
+        "path": "/synthetic-example/project/src/example-1.mjs",
+        "line": 1
+      },
+      "references": [],
+      "aliases": []
+    },
+    {
+      "toolId": "osv",
+      "ruleId": "UI-001",
+      "title": "Example configuration review",
+      "description": "Synthetic example data for exploring saved results. No new scan has been performed.",
+      "severity": "medium",
+      "verification": "reported",
+      "location": {
+        "path": "/synthetic-example/project/src/example-2.mjs",
+        "line": 2
+      },
+      "references": [],
+      "aliases": []
+    },
+    {
+      "toolId": "osv",
+      "ruleId": "UI-002",
+      "title": "Example source review",
+      "description": "Synthetic example data for exploring saved results. No new scan has been performed.",
+      "severity": "medium",
+      "verification": "candidate",
+      "location": {
+        "path": "/synthetic-example/project/src/example-3.mjs",
+        "line": 3
+      },
+      "references": [],
+      "aliases": []
+    }
+  ]
+}

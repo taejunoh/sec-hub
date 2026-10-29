@@ -1,0 +1,101 @@
+name: Desktop viewer prerelease
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-viewer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: Saved-results viewer / macOS arm64
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          architecture: arm64
+          package-manager-cache: false
+      - name: Verify native target and desktop units
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/sec-hub-desktop-evidence"
+          node -e "if(process.platform!=='darwin'||process.arch!=='arm64')process.exit(1)"
+          node --test desktop/test/*.test.mjs 2>&1 | tee "$RUNNER_TEMP/sec-hub-desktop-evidence/unit-tests.log"
+      - name: Build clean source with verified official runtime
+        shell: bash
+        run: |
+          node desktop/build.mjs --target darwin-arm64 --out "$RUNNER_TEMP/sec-hub-desktop-build" --cache "$RUNNER_TEMP/sec-hub-electron-cache" 2>&1 | tee "$RUNNER_TEMP/sec-hub-desktop-evidence/build.log"
+      - name: Run actual packaged application and observe shutdown
+        shell: bash
+        run: |
+          node desktop/smoke.mjs --executable "$RUNNER_TEMP/sec-hub-desktop-build/package/Sec Hub.app" --out "$RUNNER_TEMP/sec-hub-desktop-evidence/smoke" 2>&1 | tee "$RUNNER_TEMP/sec-hub-desktop-evidence/smoke.log"
+      - name: Preserve native package and raw evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ github.sha }}-darwin-arm64
+          path: |
+            ${{ runner.temp }}/sec-hub-desktop-build/*.zip
+            ${{ runner.temp }}/sec-hub-desktop-build/*.manifest.json
+            ${{ runner.temp }}/sec-hub-desktop-build/SHA256SUMS.txt
+            ${{ runner.temp }}/sec-hub-desktop-build/codesign-verification.log
+            ${{ runner.temp }}/sec-hub-desktop-evidence
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Saved-results viewer / Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          architecture: x64
+          package-manager-cache: false
+      - name: Verify native target and desktop units
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/sec-hub-desktop-evidence" | Out-Null
+          node -e "if(process.platform!=='win32'||process.arch!=='x64')process.exit(1)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test desktop/test/*.test.mjs 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/unit-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Existing portable Windows suite
+        env:
+          CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-desktop-evidence/portable
+        run: node scripts/ci.mjs windows
+      - name: Build clean source with verified official runtime
+        shell: pwsh
+        run: |
+          node desktop/build.mjs --target win32-x64 --out "$env:RUNNER_TEMP/sec-hub-desktop-build" --cache "$env:RUNNER_TEMP/sec-hub-electron-cache" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/build.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run actual packaged executable and observe shutdown
+        shell: pwsh
+        run: |
+          node desktop/smoke.mjs --executable "$env:RUNNER_TEMP/sec-hub-desktop-build/package/Sec Hub/Sec Hub.exe" --out "$env:RUNNER_TEMP/sec-hub-desktop-evidence/smoke" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/smoke.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve native package and raw evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ github.sha }}-win32-x64
+          path: |
+            ${{ runner.temp }}/sec-hub-desktop-build/*.zip
+            ${{ runner.temp }}/sec-hub-desktop-build/*.manifest.json
+            ${{ runner.temp }}/sec-hub-desktop-build/SHA256SUMS.txt
+            ${{ runner.temp }}/sec-hub-desktop-evidence
+          if-no-files-found: error
+          retention-days: 7
