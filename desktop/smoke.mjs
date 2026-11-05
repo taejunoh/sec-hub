@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { validatePaths } from './build.mjs';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const requiredChecks = ['rendererLoad', 'catalog', 'securityPreferences', 'folderSwitch', 'singleInstance', 'closedPort', 'executionUnavailable'];
+const requiredChecks = ['rendererLoad', 'catalog', 'securityPreferences', 'folderSwitch', 'singleInstance', 'closedPort', 'executionUnavailable', 'nativeScan'];
 function ownedURL(value) {
   const url = new URL(value);
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password) throw new Error('Smoke server must have an owned loopback URL');
@@ -41,7 +41,7 @@ async function terminate(child) {
     try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
   }
 }
-export async function smoke({ executable, out, timeoutMs = 90000 }) {
+export async function smoke({ executable, out, timeoutMs = 120000 }) {
   if (!path.isAbsolute(executable ?? '') || !path.isAbsolute(out ?? '')) throw new Error('--executable and --out must be absolute paths');
   await validatePaths({ repository, out, cache: out });
   await mkdir(out, { recursive: true });
@@ -51,7 +51,7 @@ export async function smoke({ executable, out, timeoutMs = 90000 }) {
   if ((await lstat(executable)).isDirectory()) throw new Error('--executable must select the packaged app executable');
   if ((process.platform === 'darwin' && path.basename(executable) !== 'SecHub') || (process.platform === 'win32' && path.basename(executable) !== 'Sec Hub.exe')) throw new Error('Smoke must launch the actual named packaged executable');
   await mkdir(out, { recursive: true });
-  const harness = await mkdtemp(path.join(out, 'private-smoke-')); await chmod(harness, 0o700);
+  const harness = await realpath(await mkdtemp(path.join(out, 'private-smoke-'))); await chmod(harness, 0o700);
   const env = { ...process.env, SEC_HUB_DESKTOP_SMOKE_DIR: harness };
   for (const key of ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'NODE_PATH', 'ELECTRON_EXTRA_LAUNCH_ARGS']) delete env[key];
   // Open both logs before spawning. No stream error can strand a launched app.

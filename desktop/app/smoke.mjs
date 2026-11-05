@@ -31,15 +31,14 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
   const summary = {
     status: 'failed',
     runtime: { electron: process.versions.electron, node: process.versions.node, platform: process.platform, arch: process.arch },
-    checks: { rendererLoad: false, catalog: false, securityPreferences: false, folderSwitch: false, singleInstance: false, closedPort: false, executionUnavailable: false },
+    checks: { rendererLoad: false, catalog: false, securityPreferences: false, folderSwitch: false, singleInstance: false, closedPort: false, executionUnavailable: false, nativeScan: false },
     urls,
   };
   let secondary;
   let secondaryExit;
   try {
     const preferences = window.webContents.getLastWebPreferences();
-    summary.webPreferences = { sandbox: preferences.sandbox, contextIsolation: preferences.contextIsolation, nodeIntegration: preferences.nodeIntegration };
-    summary.checks.securityPreferences = preferences.sandbox === true && preferences.contextIsolation === true && preferences.nodeIntegration === false && preferences.webSecurity === true && !preferences.preload;
+    summary.webPreferences = { sandbox: preferences.sandbox, contextIsolation: preferences.contextIsolation, nodeIntegration: preferences.nodeIntegration, webSecurity: preferences.webSecurity };
     const inspectRenderer = () => window.webContents.executeJavaScript(`(async () => ({ readyState: document.readyState, rows: document.querySelector('#artifact-list')?.children.length ?? 0, catalog: await (await fetch('/api/catalog')).json(), executionStatus: (await fetch('/api/execution')).status }))()`);
     const inspectNativeTitle = async (expected) => {
       const changeTitle = async (script) => {
@@ -60,6 +59,16 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     })(), 15_000, 'renderer_not_ready');
+    const rendererPrivileges = await window.webContents.executeJavaScript(`({
+      nodeExposed: typeof require !== 'undefined' || typeof process !== 'undefined',
+      ipcExposed: typeof ipcRenderer !== 'undefined',
+      bridge: Object.keys(window.secHubDesktop ?? {}).sort(),
+    })`);
+    summary.rendererPrivileges = rendererPrivileges;
+    summary.checks.securityPreferences = preferences.sandbox === true && preferences.contextIsolation === true
+      && preferences.nodeIntegration === false && preferences.webSecurity === true
+      && !rendererPrivileges.nodeExposed && !rendererPrivileges.ipcExposed
+      && rendererPrivileges.bridge.join(',') === 'cancelScan,chooseFolder,getJob,getState,openSetup,refreshResults,startScan';
     const count = renderer.catalog.artifacts.filter((item) => item.state === 'ready').length;
     summary.renderer = { domContentLoaded: domLoaded(), catalogCount: count };
     summary.checks.rendererLoad = domLoaded() && ['interactive', 'complete'].includes(renderer.readyState) && renderer.rows > 0;
@@ -77,6 +86,51 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     summary.checks.folderSwitch = switched === true && controller.current.url !== initial && controller.current.example === false && after.catalog.artifacts.some((item) => item.state === 'ready') && after.executionStatus === 404 && await portClosed(initial);
     summary.nativeTitles.savedResults = await inspectNativeTitle('Sec Hub — Saved results');
     summary.checks.folderSwitch &&= summary.nativeTitles.savedResults.preserved;
+    const project = path.join(directory, 'controlled-project');
+    await fs.mkdir(project, { mode: 0o700 });
+    // A pinned, harmless package coordinate exercises the official lookup without installing packages.
+    await fs.writeFile(path.join(project, 'package-lock.json'), JSON.stringify({
+      name: 'desktop-smoke', version: '1.0.0', lockfileVersion: 3, packages: {
+        '': { name: 'desktop-smoke', version: '1.0.0', dependencies: { 'is-number': '7.0.0' } },
+        'node_modules/is-number': { version: '7.0.0' },
+      },
+    }), { mode: 0o600 });
+    const invoke = (source, gesture = false) => window.webContents.executeJavaScript(source, gesture);
+    selectFolder(project);
+    window.focus();
+    const initialState = await invoke('window.secHubDesktop.getState()');
+    const withoutGesture = await invoke('window.secHubDesktop.chooseFolder()');
+    const chosen = await invoke('window.secHubDesktop.chooseFolder()', true);
+    const injected = await invoke("window.secHubDesktop.startScan({ toolIds: ['osv'], aiConsent: false, path: '/arbitrary' })", true);
+    summary.nativeScan = {
+      installed: initialState.tools?.some((tool) => tool.id === 'osv' && tool.installation === 'installed' && tool.selectable),
+      withoutGesture: withoutGesture.error?.code,
+      chosen: chosen.folderLabel === 'controlled-project',
+      selectionError: chosen.error?.code,
+      injected: injected.error?.code,
+    };
+    if (!summary.nativeScan.installed || summary.nativeScan.withoutGesture !== 'forbidden'
+      || !summary.nativeScan.chosen || summary.nativeScan.injected !== 'invalid_request') throw Error('native_scan_admission_failed');
+    const start = await invoke("window.secHubDesktop.startScan({ toolIds: ['osv'], aiConsent: false })", true);
+    if (!start.job) {
+      summary.nativeScan.startError = start.error?.code;
+      throw Error('native_scan_start_failed');
+    }
+    const job = await bounded((async () => {
+      while (true) {
+        const { job } = await invoke('window.secHubDesktop.getJob()');
+        if (job && ['completed', 'failed', 'cancelled'].includes(job.state)) return job;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+    })(), 45_000, 'native_scan_deadline');
+    const refresh = await invoke('window.secHubDesktop.refreshResults()');
+    const artifactId = refresh.results?.find((item) => item.jobId === job.id)?.artifactId;
+    const artifact = artifactId && await invoke(`fetch('/api/artifacts/${artifactId}').then((response) => response.json())`);
+    const browserStatus = artifactId && (await fetch(new URL(`api/artifacts/${artifactId}`, controller.current.url))).status;
+    const tool = artifact?.run?.tools?.find((entry) => entry.id === 'osv');
+    summary.nativeScan = { ...summary.nativeScan, state: job.state, errorCode: job.errorCode, runStatus: job.runStatus, reportsReady: job.reportsReady, artifactId, browserStatus, toolStatus: tool?.status };
+    summary.checks.nativeScan = job.state === 'completed' && job.runStatus === 'completed' && job.reportsReady
+      && tool?.status === 'completed' && browserStatus === 404;
     const secondEvent = secondInstance();
     secondary = spawn(process.execPath, ['--sec-hub-smoke', '--sec-hub-smoke-secondary'], { env: process.env, stdio: 'ignore', windowsHide: true });
     secondaryExit = new Promise((resolve, reject) => {
@@ -85,8 +139,8 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     });
     const [exitCode] = await bounded(Promise.all([secondaryExit, secondEvent]), 12_000, 'secondary_instance_timeout');
     summary.checks.singleInstance = exitCode === 0 && summary.secondary.signal === null;
-  } catch {
-    summary.error = 'packaged_runtime_self_test_failed';
+  } catch (error) {
+    summary.error = typeof error?.message === 'string' && /^[a-z_]+$/.test(error.message) ? error.message : 'packaged_runtime_self_test_failed';
   } finally {
     try { await stopSecondary(secondary, secondaryExit); }
     catch { summary.error = 'packaged_secondary_cleanup_failed'; }

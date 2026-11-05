@@ -13,7 +13,7 @@ const positive=(value,max)=>Number.isSafeInteger(value)&&value>0&&value<=max;
 function freeze(value){if(value&&typeof value==='object'){for(const child of Object.values(value))freeze(child);Object.freeze(value);}return value;}
 function invalid(){throw Object.assign(new Error('Invalid execution configuration'),{code:'invalid_execution_config',statusCode:400});}
 function contains(parent,child){const rel=relative(parent,child);return rel===''||(!isAbsolute(rel)&&rel!=='..'&&!rel.startsWith(`..${sep}`));}
-async function directoryIdentity(requested,create=false){
+export async function directoryIdentity(requested,create=false){
   if(typeof requested!=='string'||!isAbsolute(requested))invalid();
   const path=await (create?ensureSafeDirectory:assertSafeDirectory)(requested);
   const entry=await lstat(path);return {path,dev:entry.dev,ino:entry.ino};

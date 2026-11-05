@@ -4,11 +4,11 @@ import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runProcess } from '../src/processes.mjs';
-import { atomicWriteFile, ensureSafeDirectory } from '../src/safe-io.mjs';
+import { pathToFileURL } from 'node:url';
 
 // Only the OS process boundary is simulated. runProcess and its timers/events are real.
 async function windowsFixture(t, { helper = 'success', root = 'C:\\Windows' } = {}) {
@@ -159,8 +159,14 @@ for (const trigger of ['timeout', 'cancel', 'output-limit']) {
 test('Windows native: unsupported ACL trust rejects writes before mutation', { skip: process.platform !== 'win32' }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'sec-hub-win-acl-'));
   try {
-    await assert.rejects(ensureSafeDirectory(join(directory, 'new')), /unsupported.*platform|ACL/i);
-    await assert.rejects(atomicWriteFile(join(directory, 'report'), 'synthetic'), /unsupported.*platform|ACL/i);
-    assert.deepEqual(await readdir(directory), []);
+    const isolated = join(directory, 'module');
+    await mkdir(isolated);
+    for (const name of ['safe-io.mjs', 'safe-io-windows.mjs']) {
+      await copyFile(new URL('../src/' + name, import.meta.url), join(isolated, name));
+    }
+    const safe = await import(pathToFileURL(join(isolated, 'safe-io.mjs')).href);
+    await assert.rejects(safe.ensureSafeDirectory(join(directory, 'new')), /ACL helper.*unavailable/i);
+    await assert.rejects(safe.atomicWriteFile(join(directory, 'report'), 'synthetic'), /ACL helper.*unavailable/i);
+    assert.deepEqual(await readdir(directory), ['module']);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

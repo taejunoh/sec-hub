@@ -1,4 +1,5 @@
 import { spawn, execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -11,10 +12,15 @@ const portableFiles = [
   'auth-privacy.test.mjs', 'cli-version.test.mjs', 'compare.test.mjs',
   'dashboard-i18n.test.mjs', 'dashboard-view-model.test.mjs',
   'high31-windows-process-tree.test.mjs', 'privacy-release022.test.mjs',
-  'ci-runner.test.mjs',
+  'ci-runner.test.mjs', 'windows-safe-io.test.mjs',
 ];
 const nativeWindowsCases = ['timeout', 'cancel', 'output-limit'].map(trigger => `Windows native: ${trigger} terminates a ready descendant heartbeat`);
-nativeWindowsCases.push('Windows native: unsupported ACL trust rejects writes before mutation');
+nativeWindowsCases.push(
+  'Windows native: unsupported ACL trust rejects writes before mutation',
+  'Windows native: scan saves private raw artifacts and all report formats',
+  'Windows native: untrusted ACL, junction and unsafe file names fail before mutation',
+  'Windows native: atomic replacement preserves hard-link targets and rolls back stream failure',
+);
 
 function sourceCommit(cwd) {
   try { return execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
@@ -59,7 +65,7 @@ export async function prepareCloudflareSource(directory, outputDirectory) {
 }
 
 // Explicit argv works on Windows too; no shell glob expansion is involved.
-export async function runTestFiles({ files, cwd, outputDirectory, env = process.env, quiet = false }) {
+export async function runTestFiles({ files, cwd, outputDirectory, env = process.env, quiet = false, requiredWindowsCases = [] }) {
   if (!files.length) throw new Error('The test selection is empty');
   await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
   const startedAt = new Date().toISOString();
@@ -83,6 +89,11 @@ export async function runTestFiles({ files, cwd, outputDirectory, env = process.
     signal, ...(spawnError ? { spawnError } : {}), tapComplete: complete,
     logs: { tap: 'tests.tap', stderr: 'tests.stderr.log' },
   };
+  if (requiredWindowsCases.length) {
+    const passed = new Set(Array.from(tap.matchAll(/^ok \d+ - (.+)$/gm), match => match[1]));
+    summary.nativeWindowsCases = requiredWindowsCases.map(name => ({ name, passed: passed.has(name) }));
+    if (summary.nativeWindowsCases.some(item => !item.passed)) summary.exitCode = 1;
+  }
   await writeFile(join(outputDirectory, 'tests.tap'), tap);
   await writeFile(join(outputDirectory, 'tests.stderr.log'), stderr);
   await writeFile(join(outputDirectory, 'tests-summary.json'), JSON.stringify(summary, null, 2) + '\n');
@@ -106,14 +117,21 @@ async function main() {
     const summary = await runTestFiles({
       files: selected.map(file => join('test', file)), cwd: root, outputDirectory,
       env: { ...process.env, TMPDIR: privateTemp, TMP: privateTemp, TEMP: privateTemp, ...(cloudflareRoot ? { SEC_HUB_TEST_CLOUDFLARE_ROOT: cloudflareRoot } : {}) },
+      requiredWindowsCases: process.platform === 'win32' ? nativeWindowsCases : [],
     });
     summary.mode = mode;
     if (cloudflareRoot) summary.cloudflareSourceEvidence = 'cloudflare-source-summary.json';
-    summary.scope = mode === 'full' ? 'Complete supported POSIX test suite' : 'Portable subset; Windows safe I/O remains unsupported';
+    summary.scope = mode === 'full' ? 'Complete supported POSIX test suite' : 'Portable subset with native Windows process-tree and safe I/O cases';
     if (process.platform === 'win32') {
-      const tap = await readFile(join(outputDirectory, 'tests.tap'), 'utf8');
-      summary.nativeWindowsCases = nativeWindowsCases.map(name => ({ name, passed: tap.split('\n').some(line => /^ok \d+ - /.test(line) && line.slice(line.indexOf(' - ') + 3) === name) }));
-      if (summary.nativeWindowsCases.some(item => !item.passed)) summary.exitCode = 1;
+      const path = 'src/native/windows-safe-io.exe';
+      try {
+        const helper = await readFile(join(root, path));
+        if (!helper.length) throw new Error('The native Windows helper is empty');
+        summary.nativeWindowsHelper = { path, size: helper.length, sha256: createHash('sha256').update(helper).digest('hex') };
+      } catch (error) {
+        summary.nativeWindowsHelper = { path, error: error.message };
+        summary.exitCode = 1;
+      }
     }
     await writeFile(join(outputDirectory, 'tests-summary.json'), JSON.stringify(summary, null, 2) + '\n');
     process.exitCode = summary.exitCode;

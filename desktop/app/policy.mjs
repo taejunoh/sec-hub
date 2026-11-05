@@ -19,3 +19,9 @@ export function isOwnedUrl(value, ownedUrl) {
 export function browserUrl(value, ownedUrl) {
   return isOwnedUrl(value, ownedUrl) ? value : null;
 }
+
+export function isTrustedSender(event, contents, session, activeUrl) {
+  if (!contents || contents.isDestroyed() || event.sender !== contents || contents.session !== session) return false;
+  const frame = event.senderFrame;
+  return Boolean(frame && frame === contents.mainFrame && frame.url === activeUrl && isOwnedUrl(frame.url, activeUrl));
+}

@@ -178,8 +178,8 @@ function updateSnapshotChrome() {
 }
 function updateExecutionMode(mode) {
   executionMode = mode;
-  $('execution-seal').dataset.i18n = mode.enabled ? '로컬 실행 가능' : '읽기 전용';
-  $('refresh-note').dataset.i18n = mode.enabled ? '검사 후 결과 반영을 누르면 새 파일을 읽습니다.' : '새 파일을 반영하려면 서버를 다시 시작하세요.';
+  $('execution-seal').dataset.i18n = mode.desktop ? '데스크톱 검사' : mode.enabled ? '로컬 실행 가능' : '읽기 전용';
+  $('refresh-note').dataset.i18n = mode.desktop ? '검사가 끝나면 결과를 열어 저장된 기록을 살펴보세요.' : mode.enabled ? '검사 후 결과 반영을 누르면 새 파일을 읽습니다.' : '새 파일을 반영하려면 서버를 다시 시작하세요.';
   $('snapshot-note').dataset.i18n = mode.enabled ? '명시적 결과 반영 / 저장된 결과는 안전 판정이 아닙니다' : '고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다';
   for (const id of ['execution-seal', 'refresh-note', 'snapshot-note']) $(id).textContent = t($(id).dataset.i18n);
   updateSnapshotChrome();
@@ -203,7 +203,10 @@ async function applyExecutionCatalog(value, artifactId) {
   updateToolOptions();
   drawCatalog();
   updateSnapshotChrome();
-  if (artifactId && catalog.artifacts.some((item) => item.id === artifactId)) await selectArtifact(artifactId);
+  if (artifactId && catalog.artifacts.some((item) => item.id === artifactId)) {
+    await selectArtifact(artifactId);
+    if (executionMode.desktop && selectedId === artifactId) $('workspace-title').focus();
+  }
 }
 async function loadCatalog() {
   const request = ++catalogRequest;

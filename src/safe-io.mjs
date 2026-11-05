@@ -21,7 +21,9 @@ const aclReader=fileURLToPath(new URL('./native/darwin-acl-reader',import.meta.u
  * Filesystems must enforce the checked local uid/mode/ACL permissions, without
  * independent server-side or administrative grants bypassing those permissions.
  * All same-uid processes (including scanners) must be trusted.
- * Windows ACL trust cannot be established here and is rejected before mutation.
+ * Windows requires the bundled helper and a local fixed NTFS volume. The
+ * helper verifies directory owners and DACLs, refuses reparse points, and
+ * restricts created output to the current user, SYSTEM and Administrators.
  * Rechecks below detect some mistakes; they do not eliminate TOCTOU races.
  */
 function assertTrustedDirectory(entry,directory,uid) {
@@ -79,11 +81,15 @@ async function assertDirectoryAcl(directory,uid) {
 }
 
 async function walkDirectory(directory,create=false,mode=0o700) {
-  if(!['darwin','linux'].includes(process.platform)||typeof process.geteuid!=='function'){
-    throw new Error('Unsupported safe-io platform: directory ACL trust cannot be verified; use a supported POSIX filesystem with trusted ancestors.');
-  }
   if(create&&(!Number.isInteger(mode)||mode<0||mode>0o7777||(mode&0o022)!==0)){
     throw new Error('Unsafe directory mode: new output directories must not grant group/other write access.');
+  }
+  if(process.platform==='win32'){
+    const { walkWindowsDirectory }=await import('./safe-io-windows.mjs');
+    return walkWindowsDirectory(directory,create);
+  }
+  if(!['darwin','linux'].includes(process.platform)||typeof process.geteuid!=='function'){
+    throw new Error('Unsupported safe-io platform: directory ACL trust cannot be verified.');
   }
   const uid=process.geteuid();
   const absolute=resolve(directory),root=parse(absolute).root;
@@ -118,6 +124,10 @@ export function ensureSafeDirectory(directory,{mode=0o700}={}) { return walkDire
 
 /** Replace the final entry atomically within the trusted-directory boundary above. */
 export async function atomicWriteFile(file,content,{mode=0o600}={}) {
+  if(process.platform==='win32'){
+    const { atomicWriteWindowsFile }=await import('./safe-io-windows.mjs');
+    return atomicWriteWindowsFile(file,content);
+  }
   const parent=await assertSafeDirectory(dirname(resolve(file)));
   const destination=join(parent,basename(file));
   const temporary=join(parent,`.${basename(file)}.${randomUUID()}.tmp`);

@@ -21,12 +21,13 @@ export async function prepareRunDirectory(out) {
 function checkCancelled(signal) { if(signal?.aborted)throw new Error('Scan cancelled during preparation'); }
 function observe(callback,value) { try{Promise.resolve(callback?.(value)).catch(()=>{});}catch{} }
 
-async function targetDetails(target,signal,onCleanupUnconfirmed) {
+async function targetDetails(target,signal,onCleanupUnconfirmed,inspectGit) {
   checkCancelled(signal);
   const path=await realpath(resolve(target));checkCancelled(signal);
   if(!(await stat(path)).isDirectory())throw new Error('Target must be a local directory');
   checkCancelled(signal);
   const info={path};
+  if(inspectGit===false)return info;
   // These read-only plumbing commands do not invoke repository scripts or hooks.
   const gitOptions={timeoutMs:3000,maxOutputBytes:128*1024,signal,onCleanupUnconfirmed};
   const revision=await runProcess({command:'git',args:['--no-optional-locks','-C',path,'rev-parse','--verify','HEAD'],successCodes:[0]},gitOptions);
@@ -105,7 +106,7 @@ export async function runScan(options) {
   const progress=(phase,toolId,toolStatus)=>observe(options.onProgress,{phase,...(toolId?{toolId,toolStatus}:{}),completedCount,totalCount:selected.size});
   const finished=record=>{completedCount++;progress('scanning',record.id,record.status);};
   progress('preparing');
-  const target=await targetDetails(options.target,signal,onCleanupUnconfirmed),requestedOut=runDirectoryPath(options.out);
+  const target=await targetDetails(options.target,signal,onCleanupUnconfirmed,options.inspectGit),requestedOut=runDirectoryPath(options.out);
   checkCancelled(signal);
   const nativeSelected=available.filter(adapter=>adapter.kind==='agent'&&selected.has(adapter.id));
   if(nativeSelected.length)await preflightNativeLocations(target.path,requestedOut,nativeSelected,config);

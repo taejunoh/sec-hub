@@ -82,8 +82,28 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
+          architecture: x64
           package-manager-cache: false
-      - name: Portable units, native process trees and Windows fail-closed file I/O
+      - name: Build the native Windows safe I/O helper
+        shell: cmd
+        env:
+          CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
+        run: |
+          @echo off
+          set "SEC_HUB_VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+          for /f "delims=" %%I in ('"%SEC_HUB_VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "SEC_HUB_VS=%%I"
+          if not defined SEC_HUB_VS exit /b 1
+          call "%SEC_HUB_VS%\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64 -host_arch=x64 || exit /b 1
+          cd /d "%GITHUB_WORKSPACE%" || exit /b 1
+          mkdir "%CI_ARTIFACT_DIR%" || exit /b 1
+          if exist "src\native\windows-safe-io.exe" del /f /q "src\native\windows-safe-io.exe"
+          if exist "src\native\windows-safe-io.exe" exit /b 1
+          cl.exe /nologo /std:c17 /MT /W4 /WX /O2 /DUNICODE /D_UNICODE /Fo"%RUNNER_TEMP%\windows-safe-io.obj" /Fe"src\native\windows-safe-io.exe" "src\native\windows-safe-io.c" advapi32.lib > "%CI_ARTIFACT_DIR%\windows-helper-build.log" 2>&1
+          set "SEC_HUB_BUILD_STATUS=%ERRORLEVEL%"
+          type "%CI_ARTIFACT_DIR%\windows-helper-build.log"
+          if not "%SEC_HUB_BUILD_STATUS%"=="0" exit /b %SEC_HUB_BUILD_STATUS%
+          if not exist "src\native\windows-safe-io.exe" exit /b 1
+      - name: Portable units, native process trees and Windows safe I/O
         env:
           CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
         run: node scripts/ci.mjs windows

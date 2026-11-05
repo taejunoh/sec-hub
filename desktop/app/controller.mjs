@@ -58,6 +58,11 @@ export function createViewerController({ sampleRuns, startDashboard, inspectDash
 
   return {
     get current() { return current ? { url: current.url, example: current.example } : null; },
+    refreshDesktopCatalog(jobs, generation, isCurrent) {
+      const server = current?.server;
+      if (!server?.refreshDesktopCatalog || closing) throw new Error('results unavailable');
+      return server.refreshDesktopCatalog(jobs, generation, () => !closing && current?.server === server && isCurrent());
+    },
     showExample: () => change(sampleRuns, true),
     showFolder: (runs) => change(runs, false),
     close() {

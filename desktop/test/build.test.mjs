@@ -78,7 +78,7 @@ test('platform layout returns the actual named executable and resources director
 const smoke = await import('../smoke.mjs').catch(() => ({}));
 test('packaged smoke rejects missing renderer evidence and mismatched embedded runtime', () => {
   assert.equal(typeof smoke.validateSummary, 'function', 'runtime smoke validation is required');
-  const summary = { status: 'passed', runtime: { electron: '45.1.0', node: '24.22.1', platform: 'darwin', arch: 'arm64' }, checks: { rendererLoad: true, catalog: true, securityPreferences: true, folderSwitch: true, singleInstance: true, closedPort: true, executionUnavailable: true }, urls: ['http://127.0.0.1:12345/', 'http://127.0.0.1:12346/'], secondary: { exitCode: 0, signal: null } };
+  const summary = { status: 'passed', runtime: { electron: '45.1.0', node: '24.22.1', platform: 'darwin', arch: 'arm64' }, checks: { rendererLoad: true, catalog: true, securityPreferences: true, folderSwitch: true, singleInstance: true, closedPort: true, executionUnavailable: true, nativeScan: true }, urls: ['http://127.0.0.1:12345/', 'http://127.0.0.1:12346/'], secondary: { exitCode: 0, signal: null } };
   assert.doesNotThrow(() => smoke.validateSummary(summary, { electron: '45.1.0', node: '24.22.1' }, 'darwin-arm64'));
   assert.throws(() => smoke.validateSummary({ ...summary, checks: { ...summary.checks, rendererLoad: false } }, { electron: '45.1.0', node: '24.22.1' }, 'darwin-arm64'), /rendererLoad/);
   assert.throws(() => smoke.validateSummary({ ...summary, runtime: { ...summary.runtime, node: '22.0.0' } }, { electron: '45.1.0', node: '24.22.1' }, 'darwin-arm64'), /runtime/i);

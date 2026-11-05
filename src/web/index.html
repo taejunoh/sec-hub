@@ -15,15 +15,45 @@
     <div class="mast-meta"><label class="language-control"><span data-i18n="화면 언어">화면 언어</span><select id="language-select" aria-label="화면 언어" data-i18n-aria="화면 언어"><option value="ko">KO</option><option value="en">English</option></select></label><span id="execution-seal" class="seal" data-i18n="읽기 전용">읽기 전용</span><span id="snapshot-state">시작 스냅샷 대기</span></div>
   </header>
   <main id="main">
+    <section id="desktop-scan" class="scan-console" aria-labelledby="desktop-scan-title" hidden>
+      <header class="scan-console-header">
+        <div><p class="eyebrow">SCAN / WORKSPACE</p><h2 id="desktop-scan-title" data-i18n="프로젝트 보안 검사">프로젝트 보안 검사</h2></div>
+        <p data-i18n="폴더를 선택하고 도구를 확인한 다음 검사를 시작하세요.">폴더를 선택하고 도구를 확인한 다음 검사를 시작하세요.</p>
+      </header>
+      <div class="scan-stages">
+        <section class="scan-stage" aria-labelledby="desktop-source-title">
+          <p class="eyebrow">01 / SOURCE</p><h3 id="desktop-source-title" data-i18n="프로젝트 폴더">프로젝트 폴더</h3>
+          <p id="desktop-folder" class="scan-folder mono" role="status"></p>
+          <button id="desktop-choose-folder" class="quiet-button" type="button" disabled data-i18n="폴더 선택">폴더 선택</button>
+        </section>
+        <section class="scan-stage" aria-labelledby="desktop-readiness-title">
+          <p class="eyebrow">02 / READINESS</p><h3 id="desktop-readiness-title" data-i18n="도구 준비 상태">도구 준비 상태</h3>
+          <p class="scan-note" data-i18n="OSV는 알려진 의존성 취약점을 찾습니다. 패키지 정보가 취약점 조회 서비스에 전송될 수 있습니다.">OSV는 알려진 의존성 취약점을 찾습니다. 패키지 정보가 취약점 조회 서비스에 전송될 수 있습니다.</p>
+          <ul id="desktop-tools" class="scan-tools"></ul>
+          <details id="desktop-optional" class="scan-optional" hidden>
+            <summary data-i18n="추가 도구 및 로그인 안내">추가 도구 및 로그인 안내</summary>
+            <ul id="desktop-optional-tools" class="scan-tools"></ul>
+          </details>
+          <button id="desktop-recheck" class="quiet-button" type="button" disabled data-i18n="도구 상태 다시 확인">도구 상태 다시 확인</button>
+        </section>
+        <section id="desktop-execution" class="scan-stage" aria-labelledby="desktop-run-title">
+          <p class="eyebrow">03 / RUN</p><h3 id="desktop-run-title" data-i18n="검사 및 결과">검사 및 결과</h3>
+          <div id="desktop-ai-consent-box" class="scan-consent" hidden>
+            <p id="desktop-ai-details" data-i18n="선택한 AI 도구가 프로젝트 소스와 관련 정보를 모델 제공업체에 전송할 수 있습니다. 계정의 API 또는 사용량 요금이 부과될 수 있습니다.">선택한 AI 도구가 프로젝트 소스와 관련 정보를 모델 제공업체에 전송할 수 있습니다. 계정의 API 또는 사용량 요금이 부과될 수 있습니다.</p>
+            <label class="execution-tool"><input id="desktop-ai-consent" type="checkbox" aria-describedby="desktop-ai-details"><span data-i18n="이번 검사에서 AI 전송 및 발생할 수 있는 비용에 동의합니다.">이번 검사에서 AI 전송 및 발생할 수 있는 비용에 동의합니다.</span></label>
+          </div>
+        </section>
+      </div>
+    </section>
     <div class="intro"><p data-i18n="저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.">저장된 검사와 비교 자료를 살펴봅니다. 표시된 결과는 원본 검사 재검증이나 안전 판정이 아닙니다.</p><p id="refresh-note" class="refresh-note" data-i18n="새 파일을 반영하려면 서버를 다시 시작하세요.">새 파일을 반영하려면 서버를 다시 시작하세요.</p></div>
     <p id="live-status" class="live-status" role="status" aria-live="polite">화면을 준비하고 있습니다.</p>
     <div class="desk" data-reading="list">
       <aside class="catalog panel" aria-labelledby="catalog-title">
         <details id="execution-panel" class="execution-panel" hidden open>
-          <summary data-i18n="새 검사">새 검사</summary>
+          <summary id="execution-summary" data-i18n="새 검사">새 검사</summary>
           <div class="execution-body">
-            <p class="execution-scope" data-i18n="실행 대상은 운영자가 승인한 범위입니다.">실행 대상은 운영자가 승인한 범위입니다.</p>
-            <label class="execution-target-label"><span data-i18n="검사 대상">검사 대상</span><select id="execution-target" disabled aria-label="검사 대상" data-i18n-aria="검사 대상"></select></label>
+            <p id="execution-scope" class="execution-scope" data-i18n="실행 대상은 운영자가 승인한 범위입니다.">실행 대상은 운영자가 승인한 범위입니다.</p>
+            <label id="execution-target-label" class="execution-target-label"><span data-i18n="검사 대상">검사 대상</span><select id="execution-target" disabled aria-label="검사 대상" data-i18n-aria="검사 대상"></select></label>
             <fieldset class="execution-toolset" disabled id="execution-toolset"><legend data-i18n="실행 도구">실행 도구</legend><div id="execution-tools"></div></fieldset>
             <div class="execution-actions"><button id="execution-start" class="primary-button" type="button" disabled data-i18n="검사 시작">검사 시작</button><button id="execution-cancel" class="quiet-button" type="button" disabled hidden data-i18n="실행 취소">실행 취소</button></div>
             <p id="execution-status" class="execution-status" role="status" aria-live="polite"></p>
@@ -46,7 +76,7 @@
         <ul id="artifact-list" class="artifact-list" aria-label="저장된 자료" data-i18n-aria="저장된 자료"></ul>
       </aside>
       <section class="workspace panel" aria-labelledby="workspace-title">
-        <div class="section-heading workspace-title"><div><p class="eyebrow">RECORD / REVIEW</p><h2 id="workspace-title">검사 기록</h2></div><span id="selection-mark" class="selection-mark">선택 없음</span></div>
+        <div class="section-heading workspace-title"><div><p class="eyebrow">RECORD / REVIEW</p><h2 id="workspace-title" tabindex="-1">검사 기록</h2></div><span id="selection-mark" class="selection-mark">선택 없음</span></div>
         <div id="detail-state" class="empty-state">목록에서 저장된 검사 또는 비교를 선택하세요.</div>
         <div id="detail-content" class="detail-content"></div>
         <section class="compare-box" aria-labelledby="compare-title">

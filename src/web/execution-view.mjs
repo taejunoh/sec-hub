@@ -4,6 +4,11 @@ import { runStatusLabel, toolStatusLabel } from './view-model.mjs';
 const sessionKey = 'sec-hub.execution.session';
 const active = (job) => job?.state === 'running' || job?.state === 'cancelling';
 const terminal = (job) => ['completed', 'cancelled', 'failed'].includes(job?.state);
+const desktopMethods = ['getState', 'chooseFolder', 'startScan', 'getJob', 'cancelScan', 'refreshResults', 'openSetup'];
+const setupLabels = { install: '설치 안내', sign_in: '로그인 안내' };
+const installationLabels = { installed: '설치 감지됨', missing: '설치를 감지하지 못함', unknown: '설치 상태 미확인' };
+const authenticationLabels = { unknown: '로그인 미확인', not_required: '로그인 필요 없음' };
+const desktopToolNames = { osv: 'OSV Scanner', skillspector: 'SkillSpector', 'codex-security': 'Codex Security', 'open-code-review': 'Open Code Review', cloudflare: 'Cloudflare', anthropic: 'Claude', php2shell: 'PHP2Shell Checker' };
 
 export function consumeExecutionSession({ location, history, storage }) {
   const hash = location.hash;
@@ -50,6 +55,12 @@ const errors = {
   report_write_failed: '보고서 저장에 실패했습니다. 결과를 반영할 수 없습니다.',
   reports_failed: '보고서 저장에 실패했습니다. 결과를 반영할 수 없습니다.',
 };
+const desktopErrors = {
+  target_not_found: '검사할 폴더를 먼저 선택하세요.',
+  target_unavailable: '이 폴더를 열 수 없습니다. 접근할 수 있는 프로젝트 폴더를 선택하세요.',
+  tool_unavailable: '선택한 도구를 실행할 수 없습니다. 도구 상태를 다시 확인하세요.',
+  ai_consent_required: 'AI 도구를 실행하려면 이번 검사의 전송 및 비용에 동의하세요.',
+};
 export function executionStatus(job, locale = 'ko') {
   const t = (key) => translate(locale, key);
   if (!job) return t('허용된 대상과 도구를 선택해 검사를 시작하세요.');
@@ -77,6 +88,14 @@ const validJob = (job) => record(job)
   && record(job.progress) && Number.isSafeInteger(job.progress.completedCount) && job.progress.completedCount >= 0
   && Number.isSafeInteger(job.progress.totalCount) && job.progress.totalCount >= 0
   && Array.isArray(job.progress.tools) && job.progress.tools.every((tool) => record(tool) && typeof tool.id === 'string' && typeof tool.status === 'string');
+const validDesktopState = (state) => record(state)
+  && (state.folderLabel === null || (typeof state.folderLabel === 'string' && state.folderLabel.length > 0))
+  && Number.isSafeInteger(state.generation) && state.generation >= 0
+  && (state.job === null || validJob(state.job))
+  && Array.isArray(state.tools) && state.tools.every((tool) => record(tool) && typeof tool.id === 'string'
+    && Object.hasOwn(installationLabels, tool.installation) && Object.hasOwn(authenticationLabels, tool.authentication)
+    && typeof tool.selectable === 'boolean' && typeof tool.ai === 'boolean'
+    && (tool.setupActions === undefined || (strings(tool.setupActions) && tool.setupActions.every((action) => Object.hasOwn(setupLabels, action)))));
 function validResponse(path, payload) {
   if (!record(payload)) return false;
   if (path === '') return payload.enabled === true && /^[a-f0-9]{64}$/.test(payload.csrfToken ?? '')
@@ -93,9 +112,10 @@ function validResponse(path, payload) {
 export function initializeExecutionView({ document, window, getLocale, applyCatalog, onModeChange }) {
   const $ = (id) => document.getElementById(id);
   const t = (key, values) => translate(getLocale(), key, values);
+  const desktop = desktopMethods.every((name) => typeof window.secHubDesktop?.[name] === 'function') ? window.secHubDesktop : null;
   let storage;
   try { storage = window.sessionStorage; } catch {}
-  let bearer = consumeExecutionSession({ location: window.location, history: window.history, storage });
+  let bearer = desktop ? null : consumeExecutionSession({ location: window.location, history: window.history, storage });
   let enabled = false;
   let csrfToken;
   let targets = [];
@@ -109,8 +129,13 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
   let revision = 0;
   let message = '';
   let lastRefresh = null;
+  let openedJobId = null;
   let toolSignature = '';
   const toolNodes = new Map();
+  let folderLabel = null;
+  let readiness = [];
+  let readinessSignature = '';
+  const readinessNodes = new Map();
   const phaseKeys = { preparing: '검사 준비', checking: '도구 확인', scanning: '도구 검사', reporting: '보고서 저장', ready: '결과 준비됨' };
   const make = (tag, className, text) => {
     const node = document.createElement(tag);
@@ -130,8 +155,19 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
   function unavailableResponse() {
     enabled = false;
     window.clearTimeout(timer);
-    onModeChange({ enabled: false, expired: true, lastRefresh });
+    onModeChange({ enabled: false, expired: !desktop, desktop: Boolean(desktop), lastRefresh });
     return new Error('connection_failed');
+  }
+  async function nativeRequest(method, args, validate) {
+    let value;
+    try { value = await desktop[method](...args); } catch { throw new Error('connection_failed'); }
+    if (record(value?.error) && typeof value.error.code === 'string') {
+      const { code } = value.error;
+      if (code === 'job_limit' || code === 'job_limit_reached') quotaReached = true;
+      throw new Error(Object.hasOwn(errors, code) || Object.hasOwn(desktopErrors, code) ? code : 'request_failed');
+    }
+    if (!validate(value)) throw new Error('connection_failed');
+    return value;
   }
   async function request(path, body) {
     const headers = { Accept: 'application/json', Authorization: `Bearer ${bearer}` };
@@ -158,8 +194,88 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
   }
   function errorMessage(error, fallback) {
     if (error.message === 'session_expired') return message;
-    if (error.message === 'connection_failed') return '실행 서버 연결이 끊겼습니다. 운영자가 제공한 실행 URL을 이 탭에서 다시 여세요.';
-    return errors[error.message] ?? fallback;
+    if (error.message === 'connection_failed') {
+      if (!desktop) return '실행 서버 연결이 끊겼습니다. 운영자가 제공한 실행 URL을 이 탭에서 다시 여세요.';
+      unavailableResponse();
+      return '앱의 검사 상태를 확인할 수 없습니다. 도구 상태를 다시 확인하세요.';
+    }
+    return desktopErrors[error.message] ?? errors[error.message] ?? fallback;
+  }
+  const readyTool = (tool) => tool.selectable && tool.installation === 'installed';
+  const usesAI = () => readiness.some((tool) => tool.ai && selection.toolIds.includes(tool.id));
+
+  function drawReadiness() {
+    const busy = pending || active(job);
+    const folder = $('desktop-folder');
+    const folderText = folderLabel ?? t('선택한 폴더 없음');
+    if (folder.textContent !== folderText) folder.textContent = folderText;
+    $('desktop-choose-folder').textContent = t(folderLabel ? '폴더 변경' : '폴더 선택');
+    $('desktop-choose-folder').disabled = !enabled || busy;
+    $('desktop-recheck').disabled = pending || (enabled && active(job));
+    const signature = JSON.stringify(readiness);
+    if (signature !== readinessSignature) {
+      readinessSignature = signature;
+      readinessNodes.clear();
+      $('desktop-tools').replaceChildren();
+      $('desktop-optional-tools').replaceChildren();
+      $('desktop-optional').hidden = readiness.every((tool) => tool.id === 'osv');
+      for (const tool of readiness) {
+        const row = make('li', 'scan-tool');
+        const heading = make(readyTool(tool) && tool.id !== 'osv' ? 'label' : 'div', 'scan-tool-name');
+        let checkbox;
+        if (readyTool(tool) && tool.id !== 'osv') {
+          checkbox = make('input');
+          checkbox.type = 'checkbox';
+          checkbox.addEventListener('change', () => {
+            if (checkbox.disabled) return;
+            selection.toolIds = readiness.filter((item) => item.id === 'osv' ? readyTool(item) : readinessNodes.get(item.id)?.checkbox?.checked).map((item) => item.id);
+            $('desktop-ai-consent').checked = false;
+            draw();
+          });
+          heading.append(checkbox);
+        }
+        heading.append(make('strong', '', Object.hasOwn(desktopToolNames, tool.id) ? desktopToolNames[tool.id] : tool.id));
+        const scope = tool.id === 'osv' ? '기본 검사' : !tool.selectable ? '이 앱에서 실행할 수 없음' : '';
+        const scopeBadge = scope ? make('span', 'scan-tool-scope') : null;
+        if (scopeBadge) heading.append(scopeBadge);
+        const installation = make('span', 'scan-tool-state');
+        installation.dataset.state = tool.installation;
+        const authentication = make('span', 'scan-tool-auth');
+        const actions = make('div', 'scan-setup-actions');
+        const buttons = (tool.setupActions ?? []).map((action) => {
+          const button = make('button', 'quiet-button');
+          button.type = 'button';
+          button.addEventListener('click', async () => {
+            if (button.disabled) return;
+            pending = true; message = ''; draw();
+            try { await nativeRequest('openSetup', [tool.id, action], (value) => value?.ok === true); }
+            catch (error) { message = errorMessage(error, '안내를 열지 못했습니다. 다시 시도하세요.'); }
+            finally { pending = false; draw(); }
+          });
+          actions.append(button);
+          return [action, button];
+        });
+        row.append(heading, installation, authentication, actions);
+        $(tool.id === 'osv' ? 'desktop-tools' : 'desktop-optional-tools').append(row);
+        readinessNodes.set(tool.id, { checkbox, scope, scopeBadge, installation, authentication, buttons });
+      }
+    }
+    for (const tool of readiness) {
+      const { checkbox, scope, scopeBadge, installation, authentication, buttons } = readinessNodes.get(tool.id);
+      if (scopeBadge) scopeBadge.textContent = t(scope);
+      installation.textContent = t(installationLabels[tool.installation]);
+      authentication.textContent = t(authenticationLabels[tool.authentication]);
+      if (checkbox) {
+        checkbox.checked = selection.toolIds.includes(tool.id);
+        checkbox.disabled = !folderLabel || !enabled || busy;
+      }
+      for (const [action, button] of buttons) {
+        button.textContent = t(setupLabels[action]);
+        button.disabled = !enabled || busy;
+      }
+    }
+    $('desktop-ai-consent-box').hidden = !usesAI();
+    $('desktop-ai-consent').disabled = !enabled || busy;
   }
   function drawTools() {
     const allowed = targets.find((target) => target.id === selection.targetId)?.toolIds.filter((id) => id !== 'anthropic') ?? [];
@@ -183,20 +299,23 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     }
   }
   function draw() {
-    if (!bearer && !message) return;
+    if (!desktop && !bearer && !message) return;
     $('execution-panel').hidden = false;
-    drawTools();
-    const controls = executionControls({ authenticated: Boolean(bearer), enabled, selection, job, pending, quotaReached });
+    if (desktop) drawReadiness(); else drawTools();
+    const controls = executionControls({ authenticated: Boolean(desktop || bearer), enabled, selection, job, pending, quotaReached });
     $('execution-target').disabled = controls.inputsDisabled;
     $('execution-toolset').disabled = controls.inputsDisabled;
     for (const [id, node] of toolNodes) { node.disabled = controls.inputsDisabled; node.checked = selection.toolIds.includes(id); }
-    $('execution-start').disabled = controls.startDisabled;
+    $('execution-start').disabled = controls.startDisabled || Boolean(desktop && usesAI() && !$('desktop-ai-consent').checked);
     $('execution-cancel').disabled = controls.cancelDisabled;
     $('execution-refresh').disabled = controls.refreshDisabled;
-    $('execution-refresh').hidden = !terminal(job) || !job?.reportsReady;
+    $('execution-refresh').hidden = !terminal(job) || !job?.reportsReady || Boolean(desktop && job.id === openedJobId);
     $('execution-cancel').hidden = !active(job);
-    $('execution-status').textContent = message ? t(message) : executionStatus(job, getLocale());
-    $('execution-status').dataset.state = job?.state ?? 'idle';
+    const status = $('execution-status');
+    const guidance = !folderLabel ? '검사할 폴더를 먼저 선택하세요.' : selection.toolIds.length ? '준비되었습니다. 검사를 시작할 수 있습니다.' : '사용할 도구의 설치와 준비 상태를 확인하세요.';
+    const statusText = message ? t(message) : desktop && !job ? t(guidance) : executionStatus(job, getLocale());
+    if (status.textContent !== statusText) status.textContent = statusText;
+    status.dataset.state = job?.state ?? 'idle';
     const progress = $('execution-progress');
     progress.hidden = !job;
     if (job) {
@@ -212,19 +331,19 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
       for (const tool of job.progress?.tools ?? []) badges.append(make('li', 'tag', `${tool.id} · ${(['pending', 'checking', 'scanning'].includes(tool.status) ? t({ pending: '대기 중', checking: '확인 중', scanning: '검사 중' }[tool.status]) : toolStatusLabel(tool.status, getLocale()))}`));
     }
     $('execution-quota').hidden = !quotaReached;
-    $('execution-quota').textContent = t('이 세션의 검사 한도에 도달했습니다. 운영자가 서버를 다시 시작해야 합니다.');
+    $('execution-quota').textContent = t(desktop ? '이 세션의 검사 한도에 도달했습니다. Sec Hub를 다시 여세요.' : '이 세션의 검사 한도에 도달했습니다. 운영자가 서버를 다시 시작해야 합니다.');
   }
   function schedulePoll() {
     window.clearTimeout(timer);
-    if (bearer && enabled && !pending && active(job)) timer = window.setTimeout(poll, 1000);
+    if ((desktop || bearer) && enabled && !pending && active(job)) timer = window.setTimeout(poll, 1000);
   }
   async function poll() {
-    if (polling || !bearer || !active(job)) return;
+    if (polling || (!desktop && !bearer) || !active(job)) return;
     polling = true;
     const requestRevision = revision;
     const jobId = job.id;
     try {
-      const value = await request(`/jobs/${encodeURIComponent(jobId)}`);
+      const value = desktop ? await nativeRequest('getJob', [], (value) => validJob(value?.job) && value.job.id === jobId) : await request(`/jobs/${encodeURIComponent(jobId)}`);
       if (revision !== requestRevision || job?.id !== jobId) return;
       job = value.job;
       message = '';
@@ -243,10 +362,13 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
   });
   $('execution-start').addEventListener('click', async () => {
     if ($('execution-start').disabled) return;
+    const toolIds = [...selection.toolIds];
+    const aiConsent = Boolean(desktop && usesAI() && $('desktop-ai-consent').checked);
+    if (desktop) $('desktop-ai-consent').checked = false;
     revision++; window.clearTimeout(timer);
     pending = true; message = '검사를 시작하는 중…'; draw();
     try {
-      const value = await request('/jobs', { targetId: selection.targetId, toolIds: [...selection.toolIds] });
+      const value = desktop ? await nativeRequest('startScan', [{ toolIds, aiConsent }], (value) => validJob(value?.job)) : await request('/jobs', { targetId: selection.targetId, toolIds });
       job = value.job; message = '';
     } catch (error) { message = errorMessage(error, '검사를 시작하지 못했습니다. 다시 시도하세요.'); }
     finally { pending = false; draw(); schedulePoll(); }
@@ -256,7 +378,7 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     revision++; window.clearTimeout(timer);
     pending = true; draw();
     try {
-      const value = await request(`/jobs/${encodeURIComponent(job.id)}/cancel`, {});
+      const value = desktop ? await nativeRequest('cancelScan', [], (value) => validJob(value?.job) && value.job.id === job.id) : await request(`/jobs/${encodeURIComponent(job.id)}/cancel`, {});
       job = value.job; message = '';
     } catch (error) { message = errorMessage(error, '취소 요청에 실패했습니다. 실행 상태를 확인하세요.'); }
     finally { pending = false; draw(); schedulePoll(); }
@@ -265,14 +387,15 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     if ($('execution-refresh').disabled) return;
     pending = true; message = '검사 결과를 목록에 반영하는 중…'; draw();
     try {
-      const result = await request('/catalog/refresh', {});
+      const result = desktop ? await nativeRequest('refreshResults', [], (value) => validResponse('/catalog/refresh', value)) : await request('/catalog/refresh', {});
       const mapping = executionResultMapping(result, job.id, generation);
       if (!mapping.accepted) throw new Error('stale_generation');
       generation = result.generation;
       lastRefresh = result.catalog.snapshot.createdAt;
       await applyCatalog(result.catalog, mapping.artifactId, generation);
+      if (desktop && mapping.artifactId) openedJobId = job.id;
       message = mapping.artifactId ? '새 스냅샷에 결과를 반영했습니다.' : '검사 결과가 현재 스냅샷에 없습니다. 목록 수집 한도를 확인하세요.';
-      onModeChange({ enabled, lastRefresh, generation });
+      onModeChange({ enabled, desktop: Boolean(desktop), lastRefresh, generation });
     } catch (error) { message = errorMessage(error, '결과 반영에 실패했습니다. 기존 스냅샷을 유지합니다. 다시 시도하세요.'); }
     finally { pending = false; draw(); }
   });
@@ -295,7 +418,45 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     } catch (error) { message = errorMessage(error, '로컬 실행에 연결하지 못했습니다. 운영자가 제공한 실행 URL을 확인하세요.'); }
     finally { pending = false; draw(); schedulePoll(); }
   }
-  void discover();
+  async function loadDesktopState(method) {
+    revision++; window.clearTimeout(timer);
+    pending = true;
+    message = method === 'chooseFolder' ? '폴더 선택을 기다리는 중…' : '도구 준비 상태를 확인하는 중…';
+    draw();
+    try {
+      const value = await nativeRequest(method, [], validDesktopState);
+      if (method === 'chooseFolder' || value.folderLabel !== folderLabel) {
+        selection.toolIds = [];
+        $('desktop-ai-consent').checked = false;
+      }
+      folderLabel = value.folderLabel;
+      readiness = value.tools;
+      const toolIds = readiness.filter((tool) => readyTool(tool) && (tool.id === 'osv' || selection.toolIds.includes(tool.id))).map((tool) => tool.id);
+      if (toolIds.length !== selection.toolIds.length) $('desktop-ai-consent').checked = false;
+      selection = { targetId: folderLabel ? 'native-selection' : '', toolIds };
+      job = value.job;
+      generation = value.generation;
+      enabled = true;
+      message = '';
+      onModeChange({ enabled, desktop: true, lastRefresh, generation });
+    } catch (error) {
+      message = errorMessage(error, method === 'chooseFolder' ? '폴더를 선택하지 못했습니다. 다시 시도하세요.' : '도구 준비 상태를 확인하지 못했습니다. 다시 시도하세요.');
+    } finally { pending = false; draw(); schedulePoll(); }
+  }
+  if (desktop) {
+    $('desktop-scan').hidden = false;
+    $('desktop-execution').append($('execution-panel'));
+    $('execution-panel').open = true;
+    for (const id of ['execution-summary', 'execution-scope', 'execution-target-label', 'execution-toolset']) $(id).hidden = true;
+    $('desktop-ai-consent').addEventListener('change', draw);
+    $('desktop-choose-folder').addEventListener('click', () => {
+      if (!$('desktop-choose-folder').disabled) return loadDesktopState('chooseFolder');
+    });
+    $('desktop-recheck').addEventListener('click', () => {
+      if (!$('desktop-recheck').disabled) return loadDesktopState('getState');
+    });
+    void loadDesktopState('getState');
+  } else void discover();
   window.addEventListener('pagehide', () => window.clearTimeout(timer));
   return { render: draw };
 }

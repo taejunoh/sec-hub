@@ -25,3 +25,22 @@ test('CI collection retains real TAP, stderr and unsuccessful child status', asy
   assert.deepEqual(saved.files, [fixture]);
   assert.ok(Date.parse(saved.endedAt) >= Date.parse(saved.startedAt));
 });
+
+test('CI fails when a required native case is skipped or missing', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'sec-hub-ci-native-test-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const fixture = join(root, 'fixture.test.mjs'), output = join(root, 'evidence');
+  await writeFile(fixture, `import test from 'node:test';
+    test('passing native case', () => {});
+    test('skipped native case', { skip: true }, () => {});`);
+  const result = await runTestFiles({
+    files: [fixture], cwd: root, outputDirectory: output, quiet: true,
+    requiredWindowsCases: ['passing native case', 'skipped native case', 'missing native case'],
+  });
+  assert.equal(result.exitCode, 1);
+  assert.deepEqual(result.nativeWindowsCases, [
+    { name: 'passing native case', passed: true },
+    { name: 'skipped native case', passed: false },
+    { name: 'missing native case', passed: false },
+  ]);
+});

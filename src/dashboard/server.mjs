@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -206,12 +207,26 @@ function exactFields(body, fields) {
   if (Object.keys(body).length !== fields.length || fields.some((field) => !Object.hasOwn(body, field))) throw new ExecutionPolicyError('invalid_request', 400);
 }
 
-/** Start a loopback-only server; execution is enabled only by a trusted manifest filename. */
-export async function startDashboard({ runs, port = 0, signal, executionConfig } = {}) {
+function mapResults(snapshot, jobs) {
+  return jobs.filter((job) => job.reportsReady && job.resultRunId).map((job) => {
+    const artifact = snapshot.catalog.artifacts.find((entry) => entry.kind === 'run' && entry.state === 'ready' && snapshot.records.get(entry.id)?.payload?.id === job.resultRunId);
+    return { jobId: job.id, runId: job.resultRunId, artifactId: artifact?.id ?? null };
+  });
+}
+function hasDesktopSession(request, token) {
+  const header = request.headers['x-sec-hub-desktop'];
+  return typeof header === 'string' && /^[a-f0-9]{64}$/.test(header) && timingSafeEqual(Buffer.from(header, 'hex'), token);
+}
+
+/** Start a loopback-only viewer. Only a trusted manifest enables HTTP execution. */
+export async function startDashboard({ runs, port = 0, signal, executionConfig, desktopCatalog } = {}) {
   if (typeof runs !== 'string' || !path.isAbsolute(runs)) throw new TypeError('runs must be an absolute directory');
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new TypeError('port must be an integer from 0 through 65535');
   if (signal !== undefined && (typeof signal !== 'object' || typeof signal.addEventListener !== 'function')) throw new TypeError('signal must be an AbortSignal');
   if (signal?.aborted) throw new TypeError('dashboard startup aborted');
+  if (desktopCatalog && (executionConfig !== undefined || !path.isAbsolute(desktopCatalog.runs ?? '') || !/^[a-f0-9]{64}$/.test(desktopCatalog.token ?? ''))) throw new TypeError('invalid desktop catalog');
+  const desktopToken = desktopCatalog && Buffer.from(desktopCatalog.token, 'hex');
+  let desktopSnapshot;
   let jobs;
   let ExecutionError;
   let session;
@@ -265,10 +280,7 @@ export async function startDashboard({ runs, port = 0, signal, executionConfig }
       try { replacement = explicitRefreshSnapshot(await loadCatalog(runs)); } catch { throw new ExecutionPolicyError('refresh_failed', 500); }
       const nextGeneration = generation + 1;
       const catalog = catalogResponse(replacement.catalog, redact);
-      const results = jobs.describe().jobs.filter((job) => job.reportsReady && job.resultRunId).map((job) => {
-        const artifact = replacement.catalog.artifacts.find((entry) => entry.kind === 'run' && entry.state === 'ready' && replacement.records.get(entry.id)?.payload?.id === job.resultRunId);
-        return { jobId: job.id, runId: job.resultRunId, artifactId: artifact?.id ?? null };
-      });
+      const results = mapResults(replacement, jobs.describe().jobs);
       // Serialize first: an oversized/unserializable response must retain the prior snapshot.
       const result = jsonResponse({ catalog, generation: nextGeneration, results });
       snapshot = replacement;
@@ -283,7 +295,8 @@ export async function startDashboard({ runs, port = 0, signal, executionConfig }
       const address = server.address();
       const actualPort = typeof address === 'object' && address ? address.port : port;
       const policy = validateRequest(request, actualPort);
-      result = isExecution ? await routeExecution(request, policy) : routeRequest(request, policy, snapshot.records, snapshot.catalog, assets, redact);
+      const visible = desktopSnapshot && hasDesktopSession(request, desktopToken) ? desktopSnapshot : snapshot;
+      result = isExecution ? await routeExecution(request, policy) : routeRequest(request, policy, visible.records, visible.catalog, assets, redact);
     } catch (error) {
       if (isExecution) {
         const known = error instanceof ExecutionPolicyError || (ExecutionError && error instanceof ExecutionError);
@@ -370,6 +383,15 @@ export async function startDashboard({ runs, port = 0, signal, executionConfig }
   const url = `http://127.0.0.1:${actualPort}/`;
   return {
     url,
+    ...(desktopCatalog ? { async refreshDesktopCatalog(jobs, generation = 1, isCurrent = () => true) {
+      if (closing) throw new Error('dashboard is closing');
+      const replacement = explicitRefreshSnapshot(await loadCatalog(desktopCatalog.runs));
+      const value = { catalog: catalogResponse(replacement.catalog, redact), generation, results: mapResults(replacement, jobs) };
+      jsonBuffer(value);
+      if (closing || !isCurrent()) throw new Error('dashboard changed');
+      desktopSnapshot = replacement;
+      return value;
+    } } : {}),
     ...(session ? { executionUrl: `${url}#session=${session.token}` } : {}),
     close: async () => {
       if (abortHandler) signal.removeEventListener('abort', abortHandler);

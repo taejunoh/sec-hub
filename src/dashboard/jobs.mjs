@@ -16,7 +16,7 @@ const now=()=>new Date().toISOString();
 const publicJob=job=>structuredClone(job.public);
 
 /** Dependencies belong to the trusted host, never to operator JSON or browser input. */
-export function createJobController({configuration,scan=runScan,report=writeReports}){
+export function createJobController({configuration,scan=runScan,report=writeReports,inspectGit}){
   const jobs=[];let active=null,refresh=null,closing=false,quarantined=false,closePromise;
   function admission(){if(quarantined)throw new ExecutionError('cleanup_unconfirmed');if(closing)throw new ExecutionError('execution_closing');if(active||refresh)throw new ExecutionError('execution_busy');}
   function find(id){const job=jobs.find(item=>item.public.id===id);if(!job)throw new ExecutionError('job_not_found');return job;}
@@ -30,7 +30,7 @@ export function createJobController({configuration,scan=runScan,report=writeRepo
     try{
       try{await recheckExecutionPaths(configuration,target);}catch{failure='execution_path_changed';throw new Error('Execution paths unavailable');}
       if(job.controller.signal.aborted)throw new Error('Aborted before scan');
-      const run=await scan({target:target.path,out:join(configuration.runsRoot,view.id),tools:[...view.toolIds],config:target.config,ai:target.ai,url:target.url,timeoutMs:target.timeoutMs,signal:job.controller.signal,
+      const run=await scan({target:target.path,out:join(configuration.runsRoot,view.id),tools:[...view.toolIds],config:target.config,ai:target.ai,url:target.url,timeoutMs:target.timeoutMs,signal:job.controller.signal,...(inspectGit===undefined?{}:{inspectGit}),
         onCleanupUnconfirmed(){job.cleanupUnconfirmed=true;quarantined=true;abort(job,'cleanup_unconfirmed');},
         onProgress(event){
           if(!event||typeof event!=='object')return;

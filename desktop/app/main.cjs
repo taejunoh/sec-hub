@@ -1,6 +1,7 @@
 'use strict';
-const { app, BrowserWindow, Menu, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, session, ipcMain } = require('electron');
 const fs = require('node:fs');
+const { randomBytes } = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -29,6 +30,8 @@ if (!hasLock) {
 } else {
   let window;
   let controller;
+  let scanHost;
+  let viewEpoch = 0;
   let activeUrl = null;
   let quitPromise;
   let allowQuit = false;
@@ -48,7 +51,11 @@ if (!hasLock) {
     if (quitPromise) return quitPromise;
     quitPromise = (async () => {
       await initialized;
-      try { await controller?.close(); }
+      try {
+        const outcomes = await Promise.allSettled([scanHost?.close(), controller?.close()]);
+        const failed = outcomes.find((outcome) => outcome.status === 'rejected');
+        if (failed) throw failed.reason;
+      }
       finally { if (window && !window.isDestroyed()) window.destroy(); }
     })();
     return quitPromise;
@@ -76,13 +83,17 @@ if (!hasLock) {
     else requestQuit();
   }
   async function start() {
-    const [{ createViewerController, createNativeActions }, { isOwnedUrl }] = await Promise.all([
-      import('./controller.mjs'), import('./policy.mjs'),
+    const [{ createViewerController, createNativeActions }, { isOwnedUrl, isTrustedSender }, { inspectDesktopTools }] = await Promise.all([
+      import('./controller.mjs'), import('./policy.mjs'), import('./tools.mjs'),
     ]);
     const core = app.isPackaged ? path.join(process.resourcesPath, 'core') : path.resolve(__dirname, '..', '..');
-    const { startDashboard } = await import(pathToFileURL(path.join(core, 'src', 'dashboard', 'server.mjs')).href);
+    const [{ startDashboard }, { createDesktopScanController }] = await Promise.all(['server', 'desktop-execution'].map(
+      (name) => import(pathToFileURL(path.join(core, 'src', 'dashboard', `${name}.mjs`)).href),
+    ));
     const trusted = (url) => isOwnedUrl(url, activeUrl);
-    const currentSession = session.defaultSession;
+    const desktopToken = randomBytes(32).toString('hex');
+    const runs = path.join(app.getPath('userData'), 'scan-results');
+    const currentSession = session.fromPartition('sec-hub-desktop');
     currentSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     currentSession.setPermissionCheckHandler(() => false);
     currentSession.setDevicePermissionHandler(() => false);
@@ -91,10 +102,22 @@ if (!hasLock) {
     window = new BrowserWindow({
       width: 1440, height: 980, minWidth: 850, minHeight: 600, show: true,
       title: 'Sec Hub — Example data · No new scan',
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false },
+      webPreferences: { session: currentSession, preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false },
     });
     window.on('close', (event) => { event.preventDefault(); requestQuit(); });
     const contents = window.webContents;
+    currentSession.webRequest.onBeforeSendHeaders({ urls: ['http://127.0.0.1/*'] }, (details, callback) => {
+      const requestHeaders = { ...details.requestHeaders };
+      for (const key of Object.keys(requestHeaders)) if (key.toLowerCase() === 'x-sec-hub-desktop') delete requestHeaders[key];
+      if (details.resourceType === 'xhr' && ['GET', 'HEAD'].includes(details.method) && trusted(details.url)
+        && isTrustedSender({ sender: details.webContents, senderFrame: details.frame }, contents, currentSession, activeUrl)) {
+        requestHeaders['X-Sec-Hub-Desktop'] = desktopToken;
+      }
+      callback({ requestHeaders });
+    });
+    contents.on('did-start-navigation', (_event, details, _inPlace, isMainFrame) => {
+      if (typeof details === 'object' ? details.isMainFrame : isMainFrame) viewEpoch++;
+    });
     const preventUntrusted = (event, destination) => {
       const url = typeof destination === 'string' ? destination : destination?.url ?? event.url;
       if (!trusted(url)) event.preventDefault();
@@ -110,8 +133,10 @@ if (!hasLock) {
     controller = createViewerController({
       sampleRuns: path.join(__dirname, 'sample', 'example'),
       startDashboard: async (options) => {
-        const server = await startDashboard(options);
+        const server = await startDashboard({ ...options, ...(scanHost ? { desktopCatalog: { runs, token: desktopToken } } : {}) });
         urls.push(server.url);
+        const revoke = () => { if (activeUrl === server.url) { activeUrl = null; viewEpoch++; } };
+        void server.closed.then(revoke, revoke);
         return server;
       },
       inspectDashboard: async (url) => {
@@ -129,6 +154,51 @@ if (!hasLock) {
         if (!smokeDir && !quitPromise) await dialog.showMessageBox(window, { type: 'warning', title: 'Sec Hub', message });
       },
     });
+    const inspectTools = () => inspectDesktopTools(app.isPackaged ? process.resourcesPath : null);
+    try {
+      scanHost = await createDesktopScanController({
+        runs,
+        inspectTools,
+        async pickFolder() {
+          if (smokeDir && smokeSelection) { const selected = smokeSelection; smokeSelection = undefined; return selected; }
+          const result = await dialog.showOpenDialog(window, { title: 'Choose a project folder', buttonLabel: 'Choose folder', properties: ['openDirectory'] });
+          return result.canceled ? undefined : result.filePaths[0];
+        },
+        async confirmAI({ folderLabel, toolIds, signal }) {
+          const result = await dialog.showMessageBox(window, {
+            type: 'warning', title: 'Sec Hub', message: 'Run AI security tools?',
+            detail: `${toolIds.join(', ')} may send code and related context from “${folderLabel}” to model providers and may incur charges. This approval applies to this run only.`,
+            buttons: ['Cancel', 'Run AI tools'], defaultId: 0, cancelId: 0, signal,
+          });
+          return result.response === 1;
+        },
+        openExternal: (url) => shell.openExternal(url),
+        async refreshCatalog(jobs, generation, current) {
+          const result = await controller.refreshDesktopCatalog(jobs, generation, current);
+          if (current()) window.setTitle('Sec Hub — Recent scans');
+          return result;
+        },
+      });
+    } catch { /* An unsafe/unavailable output root must not disable saved results viewing. */ }
+    const unavailable = { error: { code: 'execution_unavailable' } };
+    const channelArities = { getState: 0, chooseFolder: 0, startScan: 1, getJob: 0, cancelScan: 0, refreshResults: 0, openSetup: 2 };
+    const focusedActions = new Set(['chooseFolder', 'startScan', 'openSetup']);
+    for (const [method, arity] of Object.entries(channelArities)) {
+      ipcMain.handle(`sec-hub:${method}`, async (event, ...args) => {
+        const epoch = viewEpoch;
+        const current = () => !quitPromise && epoch === viewEpoch && isTrustedSender(event, contents, currentSession, activeUrl);
+        try {
+          if (!current() || (focusedActions.has(method) && !window.isFocused())) return { error: { code: 'forbidden' } };
+          if (args.length !== arity) return { error: { code: 'invalid_request' } };
+          if (!scanHost) {
+            if (method !== 'getState') return unavailable;
+            const tools = (await inspectTools()).map(({ id, installation, ai }) => ({ id, installation, ai, selectable: false, authentication: ai ? 'unknown' : 'not_required' }));
+            return { folderLabel: null, tools, job: null, generation: 0 };
+          }
+          return await scanHost[method](...args, current);
+        } catch { return { error: { code: 'internal_error' } }; }
+      });
+    }
     initializationComplete();
     if (quitPromise) return;
     const actions = createNativeActions({
@@ -145,8 +215,15 @@ if (!hasLock) {
       ...(process.platform === 'darwin' ? [{ label: 'Sec Hub', submenu: [{ label: 'Quit Sec Hub', accelerator: 'Cmd+Q', click: requestQuit }] }] : []),
       { label: 'File', submenu: [
         { label: 'Open saved results folder…', accelerator: 'CmdOrCtrl+O', click: invoke(actions.openSavedResults) },
+        { label: 'Show recent scans', enabled: Boolean(scanHost), click: invoke(async () => {
+          const epoch = viewEpoch;
+          const result = await scanHost.refreshResults(() => !quitPromise && epoch === viewEpoch);
+          if (result.error) {
+            await dialog.showMessageBox(window, { type: 'warning', title: 'Sec Hub', message: 'Recent scans are unavailable while a scan is running, or the results could not be loaded.' });
+          } else await window.loadURL(activeUrl);
+        }) },
         { label: 'Show example', click: invoke(() => controller.showExample()) },
-        { label: 'Open in browser', click: invoke(actions.openInBrowser) },
+        { label: 'Open saved view in browser', click: invoke(actions.openInBrowser) },
         { type: 'separator' }, { label: 'Quit', accelerator: 'Alt+F4', click: requestQuit },
       ] },
       { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'selectAll' }] },

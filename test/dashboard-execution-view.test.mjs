@@ -67,7 +67,7 @@ test('session consumes an exact launch fragment, strips it immediately and uses 
 });
 
 // Minimal DOM boundary, with the real execution controller owning state and requests.
-function harness(respond, { token = 'b'.repeat(64), locale = 'ko' } = {}) {
+function harness(respond, { token = 'b'.repeat(64), locale = 'ko', desktop } = {}) {
   class Node {
     constructor(tag = 'div') { this.tagName = tag; this.children = []; this.dataset = {}; this.listeners = {}; this.textContent = ''; this.disabled = true; this.hidden = true; }
     append(...nodes) { this.children.push(...nodes); }
@@ -84,6 +84,7 @@ function harness(respond, { token = 'b'.repeat(64), locale = 'ko' } = {}) {
   const modes = [];
   const applied = [];
   const window = {
+    secHubDesktop: desktop,
     location: { hash: token ? `#session=${token}` : '', pathname: '/', search: '' },
     history: { state: null, replaceState(_state, _title, url) { this.url = url; window.location.hash = ''; } },
     sessionStorage: { getItem: k => stored.get(k), setItem: (k, v) => stored.set(k, v), removeItem: k => stored.delete(k) },
@@ -98,6 +99,106 @@ function harness(respond, { token = 'b'.repeat(64), locale = 'ko' } = {}) {
 const reply = (payload, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => payload });
 const description = (job = null) => ({ enabled: true, csrfToken: 'c'.repeat(64), targets, limits: { maxActiveJobs: 1, maxJobs: 20, maxJobTimeMs: 900000, maxHistory: 20 }, currentJob: job?.state === 'running' ? job : null, jobs: job ? [job] : [], generation: 0 });
 const running = { ...terminal, state: 'running', phase: 'scanning', targetId: 'target-one', targetLabel: '<local>', toolIds: ['osv'], startedAt: '2026-10-28T00:00:00Z', completedAt: null, progress: { completedCount: 0, totalCount: 1, tools: [{ id: 'osv', status: 'scanning' }] }, runStatus: null, reportsReady: false };
+
+const localTool = { id: 'osv', installation: 'installed', authentication: 'not_required', selectable: true, ai: false, setupActions: [] };
+const aiTool = { id: 'codex-security', installation: 'installed', authentication: 'unknown', selectable: true, ai: true, setupActions: ['sign_in'] };
+const desktopState = (overrides = {}) => ({ folderLabel: null, tools: [localTool, aiTool], job: null, generation: 0, ...overrides });
+const nativeHarness = (overrides = {}) => {
+  const calls = [];
+  const done = { ...running, ...terminal, completedAt: '2026-10-28T00:00:10Z' };
+  const methods = {
+    getState: () => desktopState(),
+    chooseFolder: () => desktopState({ folderLabel: '<img src=x>' }),
+    startScan: () => ({ job: running }),
+    getJob: () => ({ job: done }),
+    cancelScan: () => ({ job: { ...running, state: 'cancelling' } }),
+    refreshResults: () => ({ generation: 1, catalog: { artifacts: [], snapshot: { createdAt: 'now' } }, results: [{ jobId: done.id, runId: 'run-one', artifactId: 'saved' }] }),
+    openSetup: () => ({ ok: true }),
+    ...overrides,
+  };
+  const desktop = Object.fromEntries(Object.entries(methods).map(([name, handler]) => [name, (...args) => { calls.push([name, ...args]); return handler(...args); }]));
+  const h = harness(() => { throw new Error('desktop scans must not use browser execution'); }, { locale: 'en', desktop });
+  return { ...h, calls, node: id => h.nodes.get(id) };
+};
+
+test('desktop uses native folder selection and runs only the default OSV scan without AI consent', async () => {
+  const h = nativeHarness();
+  await h.settle();
+  assert.equal(h.node('desktop-scan').hidden, false);
+  assert.equal(h.node('execution-start').disabled, true);
+  await h.node('desktop-choose-folder').emit('click');
+  assert.equal(h.node('desktop-folder').textContent, '<img src=x>');
+  assert.equal(h.node('execution-start').disabled, false);
+  await h.node('execution-start').emit('click');
+  assert.deepEqual(h.calls.slice(0, 3), [['getState'], ['chooseFolder'], ['startScan', { toolIds: ['osv'], aiConsent: false }]]);
+  assert.equal(h.node('desktop-choose-folder').disabled, true);
+  await h.node('execution-cancel').emit('click');
+  assert.deepEqual(h.calls.at(-1), ['cancelScan']);
+  assert.match(h.node('execution-status').textContent, /cancelling/i);
+  await [...h.timers.values()][0].fn();
+  assert.match(h.node('execution-status').textContent, /partial/i);
+  await h.node('execution-refresh').emit('click');
+  assert.deepEqual(h.applied[0].slice(1, 3), ['saved', 1]);
+  assert.equal(h.requests.length, 0);
+});
+
+test('desktop presents install and authentication separately and sends AI tools only after opt-in', async () => {
+  const h = nativeHarness();
+  await h.settle();
+  await h.node('desktop-choose-folder').emit('click');
+  const ai = h.node('desktop-optional-tools').children[0];
+  assert.match(ai.children[1].textContent, /installed/i);
+  assert.match(ai.children[2].textContent, /sign-in.*unverified/i);
+  await ai.children[3].children[0].emit('click');
+  assert.deepEqual(h.calls.at(-1), ['openSetup', 'codex-security', 'sign_in']);
+  const checkbox = ai.children[0].children[0];
+  assert.equal(checkbox.checked, false);
+  checkbox.checked = true;
+  await checkbox.emit('change');
+  assert.equal(h.node('desktop-ai-consent-box').hidden, false);
+  assert.equal(h.node('execution-start').disabled, true);
+  await h.node('execution-start').emit('click');
+  assert.equal(h.calls.some(([method]) => method === 'startScan'), false);
+  const consent = h.node('desktop-ai-consent');
+  consent.checked = true;
+  await consent.emit('change');
+  await h.node('execution-start').emit('click');
+  assert.deepEqual(h.calls.at(-1), ['startScan', { toolIds: ['osv', 'codex-security'], aiConsent: true }]);
+  assert.equal(consent.checked, false);
+});
+
+test('missing OSV keeps start disabled and offers setup with a readiness recheck', async () => {
+  const missing = { ...localTool, installation: 'missing', selectable: false, setupActions: ['install'] };
+  const h = nativeHarness({ chooseFolder: () => desktopState({ folderLabel: 'app', tools: [missing] }), getState: () => desktopState({ folderLabel: 'app', tools: [localTool] }) });
+  await h.settle();
+  await h.node('desktop-choose-folder').emit('click');
+  assert.equal(h.node('execution-start').disabled, true);
+  const osv = h.node('desktop-tools').children[0];
+  assert.match(osv.children[1].textContent, /installation.*not detected/i);
+  await osv.children[3].children[0].emit('click');
+  assert.deepEqual(h.calls.at(-1), ['openSetup', 'osv', 'install']);
+  await h.node('desktop-recheck').emit('click');
+  assert.equal(h.node('execution-start').disabled, false);
+});
+
+test('an ambiguous desktop start requires a fresh native state before another admission', async () => {
+  const h = nativeHarness({
+    startScan: () => { throw new Error('native path /private/example'); },
+    getState: () => desktopState({ folderLabel: 'project', job: running }),
+  });
+  await h.settle();
+  // The picker is intentionally unavailable while the host reports a job. Once
+  // the existing job finishes, reproduce a start whose reply never arrives.
+  await [...h.timers.values()][0].fn();
+  await h.node('execution-start').emit('click');
+  assert.match(h.node('execution-status').textContent, /recheck tools/i);
+  assert.doesNotMatch(h.node('execution-status').textContent, /private/);
+  await h.node('execution-start').emit('click');
+  assert.equal(h.calls.filter(([method]) => method === 'startScan').length, 1);
+  await h.node('desktop-recheck').emit('click');
+  assert.equal(h.node('execution-start').disabled, true);
+  assert.equal(h.node('execution-cancel').disabled, false);
+});
 
 test('read-only mode never discovers execution or enables controls without a session', async () => {
   const h = harness(() => { throw new Error('must not fetch'); }, { token: null });

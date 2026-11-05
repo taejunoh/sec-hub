@@ -9,7 +9,7 @@ import { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const appFiles = ['package.json', 'main.cjs', 'controller.mjs', 'policy.mjs', 'smoke.mjs'];
+const appFiles = ['package.json', 'main.cjs', 'controller.mjs', 'policy.mjs', 'preload.cjs', 'tools.mjs', 'osv-lock.json', 'smoke.mjs'];
 const licenseFiles = ['LICENSE', 'LICENSES.chromium.html'];
 const supported = new Set(['darwin-arm64', 'win32-x64']);
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
@@ -89,7 +89,10 @@ export async function stagePayload({ repository: root, resources }) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   await regularFile(path.join(root, 'package.json'));
   sources.push([path.join(root, 'package.json'), path.join('core', 'package.json')]);
-  for (const filename of await sourceTree(path.join(root, 'src'))) sources.push([filename, path.join('core', path.relative(root, filename))]);
+  for (const filename of await sourceTree(path.join(root, 'src'))) {
+    const relative = path.relative(root, filename);
+    if (slash(relative) !== 'src/native/windows-safe-io.exe') sources.push([filename, path.join('core', relative)]);
+  }
   for (const [source, relative] of sources) {
     const destination = path.join(resources, relative);
     await mkdir(path.dirname(destination), { recursive: true });
@@ -165,7 +168,7 @@ export async function packAndVerify({ application, archive, target, expectedFile
     return { directory, application: layout.application, files, verification, signatureLog };
   } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
 }
-async function obtainRuntime(cache, pin) {
+async function obtainPinnedFile(cache, pin) {
   await mkdir(cache, { recursive: true });
   const archive = path.join(cache, pin.filename);
   try { await access(archive); } catch (error) {
@@ -173,18 +176,51 @@ async function obtainRuntime(cache, pin) {
     const temporary = `${archive}.${process.pid}.download`;
     try {
       const response = await fetch(pin.url, { signal: AbortSignal.timeout(180000) });
-      if (!response.ok || !response.body) throw new Error(`Official runtime download failed: ${response.status}`);
-      await pipeline(Readable.fromWeb(response.body), createWriteStream(temporary, { flags: 'wx' }));
+      if (!response.ok || !response.body || !response.url.startsWith('https://')) throw new Error(`Official download failed: ${response.status}`);
+      await pipeline(Readable.fromWeb(response.body), async function* (chunks) {
+        let size = 0;
+        for await (const chunk of chunks) {
+          size += chunk.length;
+          if (size > pin.size) throw new Error('Official download exceeds pinned size');
+          yield chunk;
+        }
+      }, createWriteStream(temporary, { flags: 'wx' }));
       await verifyArchive(temporary, pin); await rename(temporary, archive);
     } finally { await rm(temporary, { force: true }); }
   }
   await verifyArchive(archive, pin);
+  return archive;
+}
+async function obtainRuntime(cache, pin) {
+  const archive = await obtainPinnedFile(cache, pin);
   // Always extract the verified ZIP afresh; a pre-extracted cache is not trusted provenance.
   const extracted = await mkdtemp(path.join(cache, '.verified-extract-'));
   try {
     await extractArchive(archive, extracted);
     return extracted;
   } catch (error) { await rm(extracted, { recursive: true, force: true }); throw error; }
+}
+async function stageOSV(resources, cache, target) {
+  const lock = JSON.parse(await readFile(path.join(repository, 'desktop/app/osv-lock.json'), 'utf8'));
+  const binary = lock.targets[target];
+  const directory = path.join(resources, 'tools', 'osv');
+  await mkdir(directory, { recursive: true });
+  for (const pin of [binary, lock.license]) {
+    const source = await obtainPinnedFile(path.join(cache, 'osv', lock.version), pin);
+    const destination = path.join(directory, pin.filename);
+    await copyFile(source, destination);
+    await chmod(destination, pin === binary ? 0o755 : 0o644);
+    await verifyArchive(destination, pin);
+  }
+  return { version: lock.version, release: lock.release, checksums: lock.checksums, binary, license: lock.license };
+}
+async function stageWindowsSafeIO(resources, stage) {
+  const source = path.join(repository, 'src/native/windows-safe-io.c');
+  const output = path.join(resources, 'core/src/native/windows-safe-io.exe');
+  await run('cl.exe', ['/nologo', '/std:c17', '/MT', '/W4', '/WX', '/O2', '/DUNICODE', '/D_UNICODE',
+    source, `/Fo${path.join(stage, 'windows-safe-io.obj')}`, `/Fe${output}`, 'advapi32.lib'], { cwd: stage });
+  await regularFile(output);
+  return { path: slash(path.relative(resources, output)), sha256: await hashFile(output) };
 }
 async function setPlist(plist, key, value) {
   await run('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plist]);
@@ -232,7 +268,9 @@ export async function build({ target, out, cache, allowDirty = false }) {
     const layout = platformLayout(stage, target);
     if (target === 'darwin-arm64') await run('/usr/bin/ditto', [path.join(extracted, 'Electron.app'), layout.application]);
     else await cp(extracted, layout.application, { recursive: true, dereference: false });
-    if (target === 'darwin-arm64') await rebrandMac(layout.application, '0.1.0');
+    const appVersion = JSON.parse(await readFile(path.join(repository, 'desktop/app/package.json'), 'utf8')).version;
+    if (!/^\d+\.\d+\.\d+$/.test(appVersion)) throw new Error('Unexpected desktop version');
+    if (target === 'darwin-arm64') await rebrandMac(layout.application, appVersion);
     else {
       await rename(path.join(layout.application, 'electron.exe'), layout.executable);
       try { await rename(path.join(layout.application, 'electron_wer.dll'), path.join(layout.application, 'Sec Hub_wer.dll')); }
@@ -242,7 +280,9 @@ export async function build({ target, out, cache, allowDirty = false }) {
     const payload = await stagePayload({ repository, resources: layout.resources });
     const appMetadata = JSON.parse(await readFile(path.join(layout.resources, 'app/package.json'), 'utf8'));
     const coreMetadata = JSON.parse(await readFile(path.join(layout.resources, 'core/package.json'), 'utf8'));
-    if (appMetadata.version !== '0.1.0' || coreMetadata.version !== '0.3.0') throw new Error('Unexpected app/core payload version');
+    if (appMetadata.version !== appVersion || !/^\d+\.\d+\.\d+$/.test(coreMetadata.version)) throw new Error('Unexpected app/core payload version');
+    const bundledTools = { osv: await stageOSV(layout.resources, cache, target) };
+    const windowsSafeIO = target === 'win32-x64' ? await stageWindowsSafeIO(layout.resources, stage) : undefined;
     const licenses = [];
     for (const name of licenseFiles) {
       const destination = path.join(layout.resources, 'licenses/electron', name);
@@ -250,7 +290,7 @@ export async function build({ target, out, cache, allowDirty = false }) {
       licenses.push({ path: slash(path.relative(layout.application, destination)), size: (await stat(destination)).size, sha256: await hashFile(destination) });
     }
     const label = allowDirty ? 'development' : 'prerelease';
-    const metadata = { schemaVersion: 1, application: 'Sec Hub', appVersion: appMetadata.version, coreVersion: coreMetadata.version, target, label, source, runtime: { electron: lock.electron, node: lock.node, officialArchive: pin }, payload, licenses, signing: target === 'darwin-arm64' ? { kind: 'ad-hoc', identity: '-', applePublisherSigned: false, notarized: false, removedBuildMetadata: ['com.apple.FinderInfo'] } : { kind: 'no-sec-hub-publisher-signature', publisherSigned: false, vendorRuntimeSignature: 'preserved-if-present' } };
+    const metadata = { schemaVersion: 1, application: 'Sec Hub', appVersion: appMetadata.version, coreVersion: coreMetadata.version, target, label, source, runtime: { electron: lock.electron, node: lock.node, officialArchive: pin }, payload, licenses, bundledTools, windowsSafeIO, signing: target === 'darwin-arm64' ? { kind: 'ad-hoc', identity: '-', applePublisherSigned: false, notarized: false, removedBuildMetadata: ['com.apple.FinderInfo'] } : { kind: 'no-sec-hub-publisher-signature', publisherSigned: false, vendorRuntimeSignature: 'preserved-if-present' } };
     await writeFile(path.join(layout.resources, 'desktop-build.json'), json(metadata));
     if (target === 'darwin-arm64') {
       await prepareMacSigning(layout.application);
@@ -258,6 +298,7 @@ export async function build({ target, out, cache, allowDirty = false }) {
       const verification = await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', layout.application]);
       await writeFile(path.join(out, 'codesign-verification.log'), verification.stdout + verification.stderr);
     }
+    await verifyArchive(path.join(layout.resources, 'tools', 'osv', bundledTools.osv.binary.filename), bundledTools.osv.binary);
     const finalSource = await gitState();
     if (finalSource.commit !== source.commit || finalSource.status !== source.status) throw new Error('Source checkout changed during packaging; rebuild from frozen source');
     const files = await inventory(layout.application);

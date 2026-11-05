@@ -67,23 +67,42 @@ jobs:
           node-version: '24'
           architecture: x64
           package-manager-cache: false
-      - name: Verify native target and desktop units
+      - name: Verify native Windows target
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP/sec-hub-desktop-evidence" | Out-Null
           node -e "if(process.platform!=='win32'||process.arch!=='x64')process.exit(1)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test desktop/test/*.test.mjs 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/unit-tests.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Existing portable Windows suite
+      - name: Build clean source with verified official runtime and native helper
+        shell: cmd
+        run: |
+          @echo off
+          set "SEC_HUB_VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+          for /f "delims=" %%I in ('"%SEC_HUB_VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "SEC_HUB_VS=%%I"
+          if not defined SEC_HUB_VS exit /b 1
+          call "%SEC_HUB_VS%\Common7\Tools\VsDevCmd.bat" -no_logo -arch=x64 -host_arch=x64 || exit /b 1
+          cd /d "%GITHUB_WORKSPACE%" || exit /b 1
+          node desktop/build.mjs --target win32-x64 --out "%RUNNER_TEMP%\sec-hub-desktop-build" --cache "%RUNNER_TEMP%\sec-hub-electron-cache" > "%RUNNER_TEMP%\sec-hub-desktop-evidence\build.log" 2>&1
+          set "SEC_HUB_BUILD_STATUS=%ERRORLEVEL%"
+          type "%RUNNER_TEMP%\sec-hub-desktop-evidence\build.log"
+          exit /b %SEC_HUB_BUILD_STATUS%
+      - name: Desktop and portable Windows tests with the packaged helper
+        shell: pwsh
         env:
           CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-desktop-evidence/portable
-        run: node scripts/ci.mjs windows
-      - name: Build clean source with verified official runtime
-        shell: pwsh
         run: |
-          node desktop/build.mjs --target win32-x64 --out "$env:RUNNER_TEMP/sec-hub-desktop-build" --cache "$env:RUNNER_TEMP/sec-hub-electron-cache" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/build.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packagedHelper = "$env:RUNNER_TEMP/sec-hub-desktop-build/package/Sec Hub/resources/core/src/native/windows-safe-io.exe"
+          $testHelper = "src/native/windows-safe-io.exe"
+          if (Test-Path -LiteralPath $testHelper) { throw "Unexpected Windows helper in the source checkout" }
+          Copy-Item -LiteralPath $packagedHelper -Destination $testHelper
+          try {
+            node scripts/ci.mjs windows
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node --test desktop/test/*.test.mjs 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/unit-tests.log"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item -LiteralPath $testHelper -Force
+          }
       - name: Run actual packaged executable and observe shutdown
         shell: pwsh
         run: |
