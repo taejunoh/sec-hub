@@ -8,8 +8,11 @@ the saved results in a desktop app.
 Download the **desktop 0.2.0 private prerelease** from the
 [GitHub release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0).
 Sign in to GitHub with an account that has access to this private repository.
-Choose `sec-hub-desktop-0.2.0-darwin-arm64-development.zip` for macOS Apple
-silicon or `sec-hub-desktop-0.2.0-win32-x64-prerelease.zip` for Windows x64.
+
+- macOS Apple silicon: [Developer ID signed and notarized ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip)
+- macOS development variant: [ad-hoc signed ZIP, not notarized](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-development.zip)
+- Windows x64: [prerelease ZIP; no Sec Hub publisher signature](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip)
+
 The older [desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
 is a saved-results viewer; it does not scan projects. See
 [Getting started](docs/GETTING-STARTED.md) for install and scan instructions.

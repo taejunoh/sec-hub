@@ -6,8 +6,12 @@ Open the [Sec Hub Desktop 0.2.0 private prerelease page](https://github.com/taej
 and sign in to GitHub with an account that has access to this private
 repository. Download the matching package:
 
-- **macOS Apple silicon:** `sec-hub-desktop-0.2.0-darwin-arm64-development.zip`
-- **Windows x64:** `sec-hub-desktop-0.2.0-win32-x64-prerelease.zip`
+- **macOS Apple silicon, recommended:** [Developer ID signed and notarized ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip)
+- **macOS development variant:** [ad-hoc signed ZIP, not notarized](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-development.zip)
+- **Windows x64:** [prerelease ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip) (no Sec Hub publisher signature)
+
+The [macOS notarized package checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-macos-notarized-SHA256SUMS.txt)
+are on the same release page.
 
 These packages support macOS on Apple silicon and Windows x64. Intel Macs and
 Windows ARM are not supported. Extract the ZIP before opening the app. On
@@ -42,13 +46,15 @@ authentication is shown as **unknown**. The app's per-run confirmation for
 code transfer and possible provider charges does not mean that an account has
 been authenticated or that the provider call will succeed.
 
-## Opening warnings
+## Signing and opening
 
-The macOS development app is ad-hoc signed. It has no Apple developer signing
-certificate and is not notarized. Windows builds have no Sec Hub publisher
-signature. Your operating system may show a warning. These packages do not
-provide the publisher verification associated with signed, notarized releases.
-Do not disable operating-system protections to open an app you do not trust.
+The recommended macOS ZIP is signed with an Apple Developer ID, notarized, and
+has its notarization ticket stapled. The packaged app passed independent
+Gatekeeper policy (`spctl`) and stapler checks. The separate macOS development
+ZIP remains ad-hoc signed, with no Apple developer certificate or
+notarization. Windows packages have no Sec Hub publisher signature, so Windows
+may show an unknown-publisher warning. Do not disable operating-system
+protections to open an app you do not trust.
 
 The older [desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
 can open saved results and its example, but it cannot perform scans.
