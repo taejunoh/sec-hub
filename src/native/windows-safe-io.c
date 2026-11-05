@@ -13,6 +13,7 @@
 
 #define PATH_CAP 32767
 #define FRAME_CAP (64 * 1024)
+#define WINDOWS_INSTALLER_SID L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 
 typedef union {
     DWORD alignment;
@@ -70,6 +71,12 @@ static const char *principal_kind(PSID sid)
     if (IsWellKnownSid(sid, WinBuiltinUsersSid)) return "Builtin Users (S-1-5-32-545)";
     if (IsWellKnownSid(sid, WinCreatorOwnerSid)) return "Creator Owner (S-1-3-0)";
     if (IsWellKnownSid(sid, WinCreatorGroupSid)) return "Creator Group (S-1-3-1)";
+    PSID installer = NULL;
+    if (ConvertStringSidToSidW(WINDOWS_INSTALLER_SID, &installer)) {
+        BOOL match = EqualSid(sid, installer);
+        LocalFree(installer);
+        if (match) return "Windows Modules Installer (TrustedInstaller)";
+    }
     return "other Windows principal";
 }
 

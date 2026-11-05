@@ -20,6 +20,11 @@ $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 function Describe-Sid([string] $sid) {
   if ($sid -eq $current) { return 'current user' }
   if ($sid -match '^S-1-(0|1|2|3|5)-(0|1|3|4|6|7|11|12|18|19|20|32-54[4-6])$') { return $sid }
+  if ($sid -match '^S-1-5-80-') {
+    try {
+      return ([System.Security.Principal.SecurityIdentifier]::new($sid)).Translate([System.Security.Principal.NTAccount]).Value + ' (' + $sid + ')'
+    } catch { return 'Windows service SID' }
+  }
   return 'other Windows principal'
 }
 $path = $env:SEC_HUB_TEST_ACL_PATH
@@ -51,10 +56,13 @@ async function fixture(t) {
       const home = await realpath(homedir());
       for (const path of [root, home]) {
         try {
-          const { stdout } = await execute(shell, ['-NoProfile', '-NonInteractive', '-Command', ancestry], {
+          const encoded = Buffer.from(ancestry, 'utf16le').toString('base64');
+          const { stdout, stderr } = await execute(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
             env: { ...process.env, SEC_HUB_TEST_ACL_PATH: path }, timeout: 10_000,
           });
-          for (const line of stdout.trim().split(/\r?\n/)) t.diagnostic(line);
+          for (const line of stdout.trim().split(/\r?\n/).filter(Boolean)) t.diagnostic(line);
+          if (!stdout.trim()) t.diagnostic('ACL ancestry command returned no stdout.');
+          if (stderr.trim()) t.diagnostic(stderr.trim());
         } catch (diagnosticError) {
           t.diagnostic('Could not inspect test directory ancestry: ' + diagnosticError.message);
         }
