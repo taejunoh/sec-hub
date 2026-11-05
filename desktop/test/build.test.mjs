@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, readdir, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, realpath, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -185,4 +185,88 @@ test('the distributable gate rejects invalid attached Finder metadata after extr
   const { execFileSync } = await import('node:child_process'); const { dir, application } = await signedMacFixture(t);
   execFileSync('/usr/bin/xattr', ['-wx', 'com.apple.FinderInfo', '0000000000000000200000000000000000000000000000000000000000000000', path.join(application, 'Contents/Resources/preserved.txt')]);
   await assert.rejects(build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: 'darwin-arm64', expectedFiles: await fixtureInventory(application) }), /codesign|Finder|attached/i);
+});
+
+test('Developer ID options cannot affect Windows and notarization requires Developer ID', async () => {
+  const invalid = [
+    { target: 'win32-x64', macSignIdentity: 'Developer ID Application: Example (AAAAAAAAAA)' },
+    { target: 'darwin-arm64', notaryProfile: 'example' },
+    { target: 'darwin-arm64', macSignIdentity: '-' },
+  ];
+  for (const options of invalid) await assert.rejects(build.build(options), /Developer ID|macOS/i);
+});
+
+test('macOS rejects a matching scanner hash in an unsealed Developer ID receipt', { skip: process.platform !== 'darwin' || process.arch !== 'arm64' }, async t => {
+  const { verifiedOSV } = await import('../app/tools.mjs');
+  const { copyFile } = await import('node:fs/promises');
+  const dir = await fixture(t);
+  const contents = path.join(await realpath(dir), 'Contents');
+  const resources = path.join(contents, 'Resources');
+  const binary = JSON.parse(await readFile(path.join(repository, 'desktop/app/osv-lock.json'), 'utf8')).targets['darwin-arm64'];
+  const contentsPath = path.join('MacOS', binary.filename);
+  const scanner = path.join(contents, contentsPath);
+  await mkdir(path.dirname(scanner), { recursive: true });
+  await copyFile('/usr/bin/true', scanner);
+  const replacement = await readFile(scanner);
+  const packagedBinary = { path: 'Contents/' + contentsPath, size: replacement.length, sha256: createHash('sha256').update(replacement).digest('hex') };
+  const metadata = { target: 'darwin-arm64', signing: { kind: 'developer-id' }, bundledTools: { osv: { binary, packagedBinary } } };
+  await file(resources, 'desktop-build.json', JSON.stringify(metadata));
+  assert.equal(await verifiedOSV(resources), null);
+});
+
+test('the macOS build rejects an output symlink even if its destination is empty', { skip: process.platform !== 'darwin' || process.arch !== 'arm64' }, async t => {
+  const dir = await fixture(t);
+  const destination = path.join(dir, 'destination');
+  const out = path.join(dir, 'output');
+  const cache = path.join(dir, 'cache');
+  await mkdir(destination);
+  await symlink(destination, out);
+  const lock = JSON.parse(await readFile(path.join(repository, 'desktop/runtime-lock.json'), 'utf8'));
+  await file(cache, lock.targets['darwin-arm64'].filename, 'invalid offline cache fixture');
+  await assert.rejects(build.build({ target: 'darwin-arm64', out, cache, allowDirty: true }), /empty real directory/i);
+  assert.deepEqual(await readdir(destination), []);
+});
+
+test('failed macOS packaging keeps its partial archive in the private checkpoint', async t => {
+  const dir = await fixture(t);
+  const out = path.join(dir, 'output');
+  await mkdir(out);
+  const failure = new Error('Could not write SHA256SUMS.txt');
+  let checkpoint;
+  await assert.rejects(build.withMacBuildOutput(out, async stage => {
+    checkpoint = stage;
+    await file(stage, 'archive.zip', 'partial package');
+    throw failure;
+  }), error => error.cause === failure && error.message.includes(checkpoint));
+  assert.equal(path.isAbsolute(checkpoint), true);
+  assert.deepEqual(await readdir(out), []);
+  assert.equal(await readFile(path.join(checkpoint, 'archive.zip'), 'utf8'), 'partial package');
+});
+
+test('macOS output is published to the canonical parent even if its alias is retargeted', { skip: process.platform === 'win32' }, async t => {
+  const { unlink } = await import('node:fs/promises');
+  const dir = await fixture(t);
+  const first = path.join(dir, 'first');
+  const second = path.join(dir, 'second');
+  const alias = path.join(dir, 'alias');
+  await mkdir(first);
+  await mkdir(second);
+  await symlink(first, alias);
+  const { destination } = await build.withMacBuildOutput(path.join(alias, 'output'), async stage => {
+    await file(stage, 'archive.zip', 'completed package');
+    await unlink(alias);
+    await symlink(second, alias);
+  });
+  assert.equal(destination, path.join(await realpath(first), 'output'));
+  assert.equal(await readFile(path.join(destination, 'archive.zip'), 'utf8'), 'completed package');
+  assert.deepEqual(await readdir(second), []);
+});
+
+test('the macOS output transaction rejects a parent alias into source', { skip: process.platform === 'win32' }, async t => {
+  const dir = await fixture(t);
+  const alias = path.join(dir, 'source-alias');
+  await symlink(repository, alias);
+  await assert.rejects(build.withMacBuildOutput(path.join(alias, 'forbidden-mac-output'), () => {
+    assert.fail('Must not stage outputs inside source');
+  }), /outside the source repository/i);
 });
