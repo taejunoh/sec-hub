@@ -24,6 +24,7 @@ typedef struct {
     TOKEN_USER *user;
     builtin_sid system;
     builtin_sid admins;
+    PSID installer;
 } trusted_sids;
 
 // Each invocation performs one operation. Native paths carry the verbatim
@@ -52,7 +53,8 @@ static BOOL read_token(trusted_sids *sids)
         GetTokenInformation(token, TokenUser, sids->user, size, &size) &&
         IsValidSid(sids->user->User.Sid) &&
         CreateWellKnownSid(WinLocalSystemSid, NULL, sids->system.bytes, &system_size) &&
-        CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, sids->admins.bytes, &admins_size);
+        CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, sids->admins.bytes, &admins_size) &&
+        ConvertStringSidToSidW(WINDOWS_INSTALLER_SID, &sids->installer);
     CloseHandle(token);
     return success;
 }
@@ -64,19 +66,14 @@ static BOOL trusted_sid(PSID sid, const trusted_sids *sids)
         EqualSid(sid, (PSID)sids->admins.bytes);
 }
 
-static const char *principal_kind(PSID sid)
+static const char *principal_kind(PSID sid, const trusted_sids *sids)
 {
     if (IsWellKnownSid(sid, WinWorldSid)) return "Everyone (S-1-1-0)";
     if (IsWellKnownSid(sid, WinAuthenticatedUserSid)) return "Authenticated Users (S-1-5-11)";
     if (IsWellKnownSid(sid, WinBuiltinUsersSid)) return "Builtin Users (S-1-5-32-545)";
     if (IsWellKnownSid(sid, WinCreatorOwnerSid)) return "Creator Owner (S-1-3-0)";
     if (IsWellKnownSid(sid, WinCreatorGroupSid)) return "Creator Group (S-1-3-1)";
-    PSID installer = NULL;
-    if (ConvertStringSidToSidW(WINDOWS_INSTALLER_SID, &installer)) {
-        BOOL match = EqualSid(sid, installer);
-        LocalFree(installer);
-        if (match) return "Windows Modules Installer (TrustedInstaller)";
-    }
+    if (EqualSid(sid, sids->installer)) return "Windows Modules Installer (TrustedInstaller)";
     return "other Windows principal";
 }
 
@@ -96,8 +93,10 @@ static BOOL trusted_dacl(HANDLE handle, const WCHAR *path, const trusted_sids *s
         strcpy_s(problem, sizeof(problem), "directory ACL has no valid owner SID");
         goto done;
     }
-    if (!trusted_sid(owner, sids)) {
-        snprintf(problem, sizeof(problem), "untrusted directory ACL owner: %s", principal_kind(owner));
+    // Windows Modules Installer owns system ancestors such as C:\.
+    // Only its exact service SID is accepted as an intermediate owner.
+    if (!trusted_sid(owner, sids) && !(intermediate && EqualSid(owner, sids->installer))) {
+        snprintf(problem, sizeof(problem), "untrusted directory ACL owner: %s", principal_kind(owner, sids));
         goto done;
     }
     if (!dacl || !IsValidAcl(dacl)) {
@@ -142,7 +141,7 @@ static BOOL trusted_dacl(HANDLE handle, const WCHAR *path, const trusted_sids *s
         DWORD forbidden = granted & ~permitted;
         if (forbidden && !trusted_sid(principal, sids)) {
             snprintf(problem, sizeof(problem), "untrusted directory ACL grant to %s (granted 0x%08lx, forbidden 0x%08lx, flags 0x%02x)",
-                principal_kind(principal), (unsigned long)granted, (unsigned long)forbidden, (unsigned int)header->AceFlags);
+                principal_kind(principal, sids), (unsigned long)granted, (unsigned long)forbidden, (unsigned int)header->AceFlags);
             goto done;
         }
     }
@@ -383,6 +382,7 @@ done:
     while (opened) CloseHandle(ancestors[--opened]);
     free(ancestors);
     free(sids.user);
+    if (sids.installer) LocalFree(sids.installer);
     if (attributes.lpSecurityDescriptor) LocalFree(attributes.lpSecurityDescriptor);
     return success ? 0 : 2;
 }

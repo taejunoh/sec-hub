@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { join, parse } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { writeReports } from '../src/reports.mjs';
@@ -14,64 +14,11 @@ const execute = promisify(execFile);
 const native = { skip: process.platform !== 'win32' };
 const windowsDirectory = process.env.SystemRoot ?? 'C:\\Windows';
 const shell = join(windowsDirectory, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-const ancestry = String.raw`
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-function Describe-Sid([string] $sid) {
-  if ($sid -eq $current) { return 'current user' }
-  if ($sid -match '^S-1-(0|1|2|3|5)-(0|1|3|4|6|7|11|12|18|19|20|32-54[4-6])$') { return $sid }
-  if ($sid -match '^S-1-5-80-') {
-    try {
-      return ([System.Security.Principal.SecurityIdentifier]::new($sid)).Translate([System.Security.Principal.NTAccount]).Value + ' (' + $sid + ')'
-    } catch { return 'Windows service SID' }
-  }
-  return 'other Windows principal'
-}
-$path = $env:SEC_HUB_TEST_ACL_PATH
-while ($path) {
-  $acl = Get-Acl -LiteralPath $path -ErrorAction Stop
-  $rules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
-  $entries = @($rules | ForEach-Object {
-    @{sid = (Describe-Sid ($_.IdentityReference.Value)); mask = ('0x{0:X8}' -f [int]$_.FileSystemRights);
-      type = [string]$_.AccessControlType; inherited = $_.IsInherited;
-      inheritance = [string]$_.InheritanceFlags; propagation = [string]$_.PropagationFlags}
-  })
-  @{path = $path; owner = (Describe-Sid ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value));
-    protected = $acl.AreAccessRulesProtected; acl = $entries} | ConvertTo-Json -Compress -Depth 4
-  $parent = [System.IO.Directory]::GetParent($path)
-  if ($null -eq $parent) { break }
-  $path = $parent.FullName
-}
-`;
-let ancestryReported = false;
-
+const windowsInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'sec-hub-windows-io-')));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
-  try {
-    await assertSafeDirectory(root);
-  } catch (error) {
-    if (!ancestryReported) {
-      ancestryReported = true;
-      const home = await realpath(homedir());
-      for (const path of [root, home]) {
-        try {
-          const encoded = Buffer.from(ancestry, 'utf16le').toString('base64');
-          const { stdout, stderr } = await execute(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
-            env: { ...process.env, SEC_HUB_TEST_ACL_PATH: path }, timeout: 10_000,
-          });
-          for (const line of stdout.trim().split(/\r?\n/).filter(Boolean)) t.diagnostic(line);
-          if (!stdout.trim()) t.diagnostic('ACL ancestry command returned no stdout.');
-          if (stderr.trim()) t.diagnostic(stderr.trim());
-        } catch (diagnosticError) {
-          t.diagnostic('Could not inspect test directory ancestry: ' + diagnosticError.message);
-        }
-      }
-      try { await assertSafeDirectory(home); t.diagnostic('User profile passed the native ACL check.'); }
-      catch (homeError) { t.diagnostic('User profile check: ' + homeError.message); }
-    }
-    throw error;
-  }
+  await assertSafeDirectory(root);
   return root;
 }
 
@@ -104,12 +51,39 @@ test('Windows native: scan saves private raw artifacts and all report formats', 
   assert.match(await readFile(saved.html, 'utf8'), /<!doctype html>/i);
   assert.equal(JSON.parse(await readFile(saved.sarif, 'utf8')).version, '2.1.0');
   assert.equal(await readFile(join(directory, 'raw', adapter.id, 'stdout.txt'), 'utf8'), 'fixture output');
-  const check = "$acl = Get-Acl -LiteralPath $env:SEC_HUB_TEST_ACL_PATH; [PSCustomObject]@{Protected = $acl.AreAccessRulesProtected; Sids = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]).IdentityReference.Value); Current = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value} | ConvertTo-Json -Compress";
+  const check = `
+$ErrorActionPreference = 'Stop'
+$path = $env:SEC_HUB_TEST_ACL_PATH
+$acl = if ([System.IO.Directory]::Exists($path)) {
+  [System.IO.Directory]::GetAccessControl($path)
+} else {
+  [System.IO.File]::GetAccessControl($path)
+}
+[Console]::WriteLine($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value)
+[Console]::WriteLine($acl.AreAccessRulesProtected)
+[Console]::WriteLine([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+  [Console]::WriteLine($rule.IdentityReference.Value)
+}
+`;
+  const encoded = Buffer.from(check, 'utf16le').toString('base64');
+  const inspectAcl = async path => {
+    const { stdout } = await execute(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], {
+      env: { ...process.env, SEC_HUB_TEST_ACL_PATH: path },
+    });
+    const [owner, protectedAcl, current, ...sids] = stdout.trim().split(/\r?\n/);
+    assert.match(owner, /^S-1-/);
+    return { owner, protectedAcl, current, sids };
+  };
+  const drive = parse(root).root;
+  if ((await inspectAcl(drive)).owner === windowsInstaller) {
+    await assert.rejects(assertSafeDirectory(drive), /untrusted directory ACL owner: Windows Modules Installer/);
+  }
   for (const path of [directory, saved.json]) {
-    const { stdout } = await execute(shell, ['-NoProfile', '-NonInteractive', '-Command', check], { env: { ...process.env, SEC_HUB_TEST_ACL_PATH: path } });
-    const acl = JSON.parse(stdout);
-    assert.equal(acl.Protected, true);
-    assert.deepEqual(new Set(acl.Sids), new Set(['S-1-5-18', 'S-1-5-32-544', acl.Current]));
+    const { protectedAcl, current, sids } = await inspectAcl(path);
+    assert.equal(protectedAcl, 'True');
+    assert.match(current, /^S-1-/);
+    assert.deepEqual(new Set(sids), new Set(['S-1-5-18', 'S-1-5-32-544', current]));
   }
 });
 
@@ -119,7 +93,8 @@ test('Windows native: untrusted ACL, junction and unsafe file names fail before 
   const exposed = join(root, 'exposed');
   const junction = join(root, 'junction');
   const inherits = join(root, 'inherits');
-  await Promise.all([mkdir(outside), mkdir(exposed), mkdir(inherits)]);
+  const serviceGroup = join(root, 'service-group');
+  await Promise.all([mkdir(outside), mkdir(exposed), mkdir(inherits), mkdir(serviceGroup)]);
   const victim = join(outside, 'victim.txt');
   await writeFile(victim, 'unchanged');
   await symlink(outside, junction, 'junction');
@@ -133,6 +108,9 @@ test('Windows native: untrusted ACL, junction and unsafe file names fail before 
   await execute(icacls, [inherits, '/grant', '*S-1-5-11:(OI)(CI)(IO)(M)']);
   await assert.rejects(assertSafeDirectory(inherits), /ACL/i);
   assert.deepEqual(await readdir(inherits), []);
+  await execute(icacls, [serviceGroup, '/grant', '*S-1-5-80-0:(DC)']);
+  await assert.rejects(ensureSafeDirectory(join(serviceGroup, 'missing')), /untrusted directory ACL grant/i);
+  assert.deepEqual(await readdir(serviceGroup), []);
   for (const name of ['victim.txt:secret', 'NUL.txt', 'LPT¹.txt', 'report.txt.', 'report.txt ']) {
     await assert.rejects(atomicWriteFile(join(outside, name), 'secret'), /unsupported|unsafe/i);
   }

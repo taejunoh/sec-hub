@@ -24,6 +24,7 @@ const aclReader=fileURLToPath(new URL('./native/darwin-acl-reader',import.meta.u
  * Windows requires the bundled helper and a local fixed NTFS volume. The
  * helper verifies directory owners and DACLs, refuses reparse points, and
  * restricts created output to the current user, SYSTEM and Administrators.
+ * Intermediate directories may also be owned by Windows Modules Installer.
  * Rechecks below detect some mistakes; they do not eliminate TOCTOU races.
  */
 function assertTrustedDirectory(entry,directory,uid) {
