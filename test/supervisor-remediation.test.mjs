@@ -56,7 +56,7 @@ if(scenario){
           throw new Error('Synthetic pre-registration prompt failure');
         }
       }
-      return {prompt:'Synthetic deterministic role prompt.',sourceBlocks:[],context};
+      return {prompt:'Synthetic deterministic role prompt.',sourceBlocks:[],context,readFiles:[join(root,'pinned-document.md')]};
     },
     supervisedArgs:()=>[],reconOutputSchema:()=>null,
     validateRecon:()=>{},preparePlan:()=>state,assignHunter:()=>{},applyHunter:()=>{},
@@ -82,10 +82,16 @@ if(scenario){
   registerHooks({
     resolve(specifier,context,next){
       if(specifier==='node:child_process'&&context.parentURL?.includes('/src/agents/supervised-cloudflare.mjs'))return {url:'fixture:child-process',shortCircuit:true};
+      // This lifecycle fixture exercises orchestration without claiming to
+      // emulate macOS sandbox behavior. Keep the real Linux rejection covered
+      // by codex-sandbox-policy.test.mjs; replace only the policy dependency in
+      // this child process so the existing fake CLI can reach lifecycle paths.
+      if(specifier==='./codex-sandbox.mjs'&&context.parentURL?.includes('/src/agents/'))return {url:'fixture:codex-sandbox',shortCircuit:true};
       return next(specifier,context);
     },
     load(url,context,next){
       if(url==='fixture:child-process')return {format:'module',shortCircuit:true,source:'export const {spawn,execFile}=globalThis.__supervisorFixture;'};
+      if(url==='fixture:codex-sandbox')return {format:'module',shortCircuit:true,source:`export const SANDBOX_INVOCATION_POLICY_VERSION=2;export function assertSandboxBackend(){};export async function probeSandbox(){return {schema:'test-only-orchestration-fixture',platform:process.platform}};export function replaySandboxInvocationPolicy(){return 2};export function validateSandboxProbe(){};export function nativeSandboxArgs(){return []};export function roleSandboxArgs(){return []};`};
       if(url.includes('?supervisor-fixture-original'))return next(url,context);
       const basename=url.split('/').at(-1),names=replacements[basename];
       if(names&&url.includes('/src/agents/'))return {format:'module',shortCircuit:true,source:`export * from ${JSON.stringify(url+'?supervisor-fixture-original')}; export const {${names.join(',')}}=globalThis.__supervisorFixture;`};

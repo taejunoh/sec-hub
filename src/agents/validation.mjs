@@ -4,6 +4,7 @@ import { open, readdir, lstat, mkdir, writeFile } from 'node:fs/promises';
 import { join, relative, resolve, isAbsolute } from 'node:path';
 import { inspectTerminalOutcome } from './native-errors.mjs';
 import { validateAgentOptions } from '../config.mjs';
+import {replaySandboxInvocationPolicy,validateSandboxProbe} from './codex-sandbox.mjs';
 import { codexArgs,claudeArgs,cloudflarePrompt } from './invocation.mjs';
 import { atomicWriteFile } from '../safe-io.mjs';
 import { createHash } from 'node:crypto';
@@ -281,8 +282,9 @@ export async function validateNativeExecution(id,ctx){
   if(manifest.model!==options.model||manifest.backend!==(id==='cloudflare'?'codex':'claude')||manifest.mode!==(id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan')||!text(manifest.backendVersion)||manifest.invocation?.command!==ctx.config.tools[id].command||!Array.isArray(manifest.invocation.args)||!sameInputs(manifest.invocation.args.slice(0,(ctx.config.tools[id].args??[]).length),ctx.config.tools[id].args??[]))throw new Error(`${id}: native backend configuration differs`);
   if(!text(manifest.nativeNodeExecutable)||!isAbsolute(manifest.nativeNodeExecutable)||/[\x00-\x1f\x7f]/.test(manifest.nativeNodeExecutable)||!/^\d+\.\d+\.\d+/.test(manifest.nativeNodeVersion??'')||Number.parseInt(manifest.nativeNodeVersion)<22)throw new Error(`${id}: missing or invalid native Node runtime evidence`);
   const policy=id==='anthropic'?anthropicPolicyVersion(manifest):undefined,registered=[2,3].includes(policy);
-  const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs,policy);
+  const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable,replaySandboxInvocationPolicy(manifest)):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs,policy);
   if(manifest.invocation.cwd!==(id==='cloudflare'?runner:options.skillRoot)||!sameInputs(manifest.invocation.args,[...(ctx.config.tools[id].args??[]),...expectedArgs])||(id==='cloudflare'&&manifest.promptSha256!==sha256(cloudflarePrompt(manifest.copyTarget,join(runner,'audit'),options))))throw new Error(`${id}: native invocation does not match trusted policy`);
+  if(id==='cloudflare'&&replaySandboxInvocationPolicy(manifest)===2)validateSandboxProbe(manifest.sandboxProbe,true,manifest.backendVersion);
   const instructions=await verifySourcePin(id,options,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true});if(!sameInputs(instructions,manifest.instructions))throw new Error(`${id}: official instruction hashes differ`);
   if(id==='anthropic'&&registered)await validateAnthropicRegistration(manifest.skillRegistration,manifest.copyTarget,options.skillRoot,instructions,ctx.artifactDir);
   const current=await sourceManifest(ctx.target);if(!sameInputs(current,manifest.inputs)||!sameInputs(manifest.inputs,manifest.copyBefore)||!sameInputs(manifest.inputs,manifest.copyAfter)||!sameInputs(manifest.inputs,manifest.originalAfter))throw new Error(`${id}: source preservation failed`);

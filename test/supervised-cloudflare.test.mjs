@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm, access, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { runSupervisedCloudflare } from '../src/agents/supervised-cloudflare.mjs';
+import { registerSupervisedMockSandboxBackend } from './helpers/supervised-mock-sandbox-backend.mjs';
+registerSupervisedMockSandboxBackend();
+const { runSupervisedCloudflare } = await import('../src/agents/supervised-cloudflare.mjs');
 import { validateSupervisedCloudflare, finalizeSupervisedCloudflare, preparePlan, applyCritic, assertObservedPolicy } from '../src/agents/supervised-validation.mjs';
 import { loadCloudflareContracts, supervisedArgs } from '../src/agents/cloudflare-prompts.mjs';
 import { PINS, sha256 } from '../src/agents/validation.mjs';
@@ -13,6 +15,10 @@ import { cloudflareSourceRoot } from './helpers/cloudflare-source.mjs';
 
 const skillRoot=cloudflareSourceRoot();
 let available=true;try{await access(join(skillRoot,'skills/security-audit/SKILL.md'));}catch{available=false;}
+const nativeWrapperArgs=payload=>[
+  ...(process.platform==='linux'?['--import',resolve('test/fixtures/supervised-mock-sandbox-backend-preload.mjs')]:[]),
+  resolve('src/agents/native-wrapper.mjs'),JSON.stringify(payload),
+];
 async function fixture(mode='zero',maxAgents=10){
   const root=await mkdtemp(join(tmpdir(),'supervised-cf-test-')),target=join(root,'target'),artifactDir=join(root,'raw');
   await mkdir(target);await writeFile(join(target,'target.mjs'),'export const run = input => input;\n');
@@ -22,8 +28,8 @@ async function fixture(mode='zero',maxAgents=10){
   return {root,payload,ctx,async json(file){return JSON.parse(await readFile(join(artifactDir,file),'utf8'));},async dispose(){await rm(root,{recursive:true,force:true});}};
 }
 test('supervised args isolate fresh read-only roles and contracts preserve official text',{skip:!available},async()=>{
-  const c=await loadCloudflareContracts(skillRoot),args=supervisedArgs('/runner',{model:'gpt-6.1-sol',effort:'medium'});
-  assert.ok(args.includes('read-only'));assert.ok(args.includes('--ephemeral'));assert.ok(args.includes('features.multi_agent=false'));assert.ok(args.includes('project_doc_max_bytes=0'));
+  const c=await loadCloudflareContracts(skillRoot),args=supervisedArgs('/runner',{model:'gpt-6.1-sol',effort:'medium'},process.execPath,null,2,[join(c.root,'SKILL.md')]);
+  assert.ok(args.includes('default_permissions="sec_hub_v2"'));assert.ok(!args.includes('--sandbox'));assert.ok(args.includes('--ephemeral'));assert.ok(args.includes('features.multi_agent=false'));assert.ok(args.includes('project_doc_max_bytes=0'));
   assert.ok(args.includes('skills.include_instructions=false'));assert.ok(args.some(x=>x.startsWith('developer_instructions=')&&x.includes('externally supervised Cloudflare role')));
   assert.equal(c.recon.length,4);assert.match(c.recon[2].text,/stored or derived copies/);assert.match(c.recon[3].text,/promotion/);
   assert.match(c.method.text,/READ THE CODE AT DEPTH/);assert.match(c.hunterContract.text,/proposed_verdict/);
@@ -134,7 +140,7 @@ async function waitForProcessExit(pid,timeoutMs) {
 }
 test('supervised cancellation through outer process runner kills TERM-resistant owned descendants',{skip:!available},async()=>{
   const f=await fixture('hang'),controller=new AbortController();let settled=false;
-  const running=runProcess({command:process.execPath,args:[resolve('src/agents/native-wrapper.mjs'),JSON.stringify(f.payload)]},{timeoutMs:35000,signal:controller.signal,redactOutput:false});
+  const running=runProcess({command:process.execPath,args:nativeWrapperArgs(f.payload)},{timeoutMs:35000,signal:controller.signal,redactOutput:false});
   running.then(()=>{settled=true;},()=>{settled=true;});
   try{
     const event=await waitForRoleEvent(join(f.payload.artifactDir,'roles/recon-1a-1/events.jsonl'),event=>event.item?.text?.startsWith('FAKE_DESCENDANT_PID='),()=>settled);
@@ -146,7 +152,7 @@ test('supervised cancellation through outer process runner kills TERM-resistant 
 });
 test('supervised forbidden global-skill command aborts stalled planner before role timeout',{skip:!available},async()=>{
   const f=await fixture('planner-global-skill-stall');let settled=false;
-  const running=runProcess({command:process.execPath,args:[resolve('src/agents/native-wrapper.mjs'),JSON.stringify(f.payload)]},{timeoutMs:35000,redactOutput:false});
+  const running=runProcess({command:process.execPath,args:nativeWrapperArgs(f.payload)},{timeoutMs:35000,redactOutput:false});
   running.then(()=>{settled=true;},()=>{settled=true;});
   try{
     const event=await waitForRoleEvent(join(f.payload.artifactDir,'roles/planner-5/events.jsonl'),event=>event.item?.id==='forbidden-skill',()=>settled);

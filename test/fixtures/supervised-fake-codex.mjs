@@ -5,7 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 const mode=process.argv[2];
-if(process.argv.includes('--version')){console.log('codex-cli FAKE-TEST-FIXTURE');process.exit(0);}
+if(process.argv.includes('--version')){console.log(mode==='unsupported-version'?'codex-cli 0.154.0':'codex-cli 0.164.0 FAKE-TEST-FIXTURE');process.exit(0);}
+// Mock transport-only preflight response; never OS sandbox evidence.
+if(process.argv.includes('sandbox')){if(mode==='failed-sandbox')process.exit(71);process.stdout.write(process.argv.at(-1));process.exit(0);}
 let prompt='';for await(const data of process.stdin)prompt+=data;
 const context=JSON.parse(prompt.match(/^SEC_HUB_CONTEXT=(.*)$/m)[1]),role=context.role;
 const emit=value=>console.log(JSON.stringify(value));

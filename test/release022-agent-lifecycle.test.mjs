@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { resolve,join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cloudflareSourceRoot } from './helpers/cloudflare-source.mjs';
+import { registerSupervisedMockSandboxBackend } from './helpers/supervised-mock-sandbox-backend.mjs';
 const scenario=process.env.SEC_HUB_RELEASE022_SCENARIO;
 if(scenario){
  const root=process.env.SEC_HUB_RELEASE022_ROOT,target=join(root,'target'),artifactDir=join(root,'raw'),workRoot=join(root,'work');await fs.mkdir(target);await fs.writeFile(join(target,'target.mjs'),'export const run = input => input;\n');let pins=0,finalizing=false;
@@ -24,7 +25,7 @@ if(scenario){
  if(scenario==='preparation'&&url.endsWith('/src/agents/cloudflare-preparation.mjs'))return {format:'module',shortCircuit:true,source:'export async function inspectCloudflarePreparation(){return {receipt:{chargedAgents:5},retainedFiles:[],source:{inputs:[]}};} export async function materializeCloudflarePreparation(){throw new Error("must not reach materialization");}'};
  return next(url,context);
  }});
- const {runSupervisedCloudflare}=await import('../src/agents/supervised-cloudflare.mjs');const {PINS}=await import('../src/agents/validation.mjs');
+ registerSupervisedMockSandboxBackend();const {runSupervisedCloudflare}=await import('../src/agents/supervised-cloudflare.mjs');const {PINS}=await import('../src/agents/validation.mjs');
  let exitCode,error;try{exitCode=await runSupervisedCloudflare({id:'cloudflare',command:process.execPath,args:[resolve('test/fixtures/supervised-fake-codex.mjs'),'zero'],target,artifactDir,agentOptions:{strategy:'supervised-codex-workers',skillRoot:cloudflareSourceRoot(),workRoot,revision:PINS.cloudflare,model:'model',maxAgents:10,...(scenario==='preparation'?{preparationFrom:join(root,'prior/raw/cloudflare/execution-manifest.json'),preparationSha256:'a'.repeat(64)}:{})}});}catch(e){error=e.message;}
  const read=async file=>fs.readFile(join(artifactDir,file),'utf8').catch(()=>null);process.stdout.write(JSON.stringify({exitCode,error,stages:await fs.readdir(workRoot),manifest:JSON.parse(await read('execution-manifest.json')),metadata:JSON.parse(await read('run-metadata.json')),report:await read('REPORT.md'),canonicalHashes:Object.fromEntries(await Promise.all(['run-metadata.json','REPORT.md'].map(async name=>[name,createHash('sha256').update((await read(name))??'').digest('hex')])))})+'\n');
 }else{

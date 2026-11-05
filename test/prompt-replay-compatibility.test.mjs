@@ -5,7 +5,9 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {buildRolePrompt,replayPromptVersion,CLOUDFLARE_PROMPT_VERSION} from '../src/agents/cloudflare-prompts.mjs';
 import {sha256,PINS} from '../src/agents/validation.mjs';
-import {runSupervisedCloudflare} from '../src/agents/supervised-cloudflare.mjs';
+import {registerSupervisedMockSandboxBackend} from './helpers/supervised-mock-sandbox-backend.mjs';
+registerSupervisedMockSandboxBackend();
+const {runSupervisedCloudflare}=await import('../src/agents/supervised-cloudflare.mjs');
 import {validateSupervisedCloudflare,assertObservedPolicy} from '../src/agents/supervised-validation.mjs';
 import {cloudflareSourceRoot} from './helpers/cloudflare-source.mjs';
 const block=name=>({file:'HUNTING.md',ref:name,text:`official ${name}\n`,sha256:sha256(`official ${name}\n`)});
@@ -56,7 +58,12 @@ test('fresh runner records v2 and rejects relabeling, missing or unknown version
   const ctx={target,artifactDir,exitCode:0,config:{tools:{cloudflare:{command:payload.command,args:payload.args,agentOptions}}}};
   assert.equal(await runSupervisedCloudflare(payload),0);
   const path=join(artifactDir,'execution-manifest.json'),manifest=JSON.parse(await readFile(path,'utf8'));
-  assert.equal(manifest.promptVersion,2);assert.deepEqual((await validateSupervisedCloudflare(ctx)).findings,[]);
+  assert.equal(manifest.sandboxInvocationPolicyVersion,2);assert.equal(manifest.promptVersion,2);assert.deepEqual((await validateSupervisedCloudflare(ctx)).findings,[]);
+  for(const version of [undefined,1,null,0,3,'2']){
+   const changed=structuredClone(manifest);if(version===undefined)delete changed.sandboxInvocationPolicyVersion;else changed.sandboxInvocationPolicyVersion=version;
+   await writeFile(path,JSON.stringify(changed));
+   await assert.rejects(validateSupervisedCloudflare(ctx),version===undefined||version===1?/invocation\/prompt differs/:/Unsupported Codex sandbox invocation policy version/);
+  }
   for(const version of [1,undefined,3]){
    const changed=structuredClone(manifest);if(version===undefined)delete changed.promptVersion;else changed.promptVersion=version;
    await writeFile(path,JSON.stringify(changed));

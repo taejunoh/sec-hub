@@ -1,5 +1,6 @@
 // Prompt text is extracted from the configured clean pinned source, never notes.
 import { join, dirname } from 'node:path';
+import {roleSandboxArgs,replaySandboxInvocationPolicy,SANDBOX_INVOCATION_POLICY_VERSION} from './codex-sandbox.mjs';
 import { readdir } from 'node:fs/promises';
 import { safeRead, sha256 } from './validation.mjs';
 const json=value=>JSON.stringify(value);
@@ -36,9 +37,10 @@ export async function loadCloudflareContracts(skillRoot){
   }
   return {root,docs,recon,companions,catalog,method:block('HUNTING.md','HUNTING.md#Core hunting method',fenced(h,'#### Core hunting method')),promotion:block('HUNTING.md','HUNTING.md#Promotion procedure',fenced(h,'#### Promotion procedure')),gate:block('HUNTING.md','HUNTING.md#Core validation rules',fenced(h,'#### Core validation rules')),hunterContract:block('HUNTING.md','HUNTING.md#Structured hunter result',section(h,'## Structured hunter result','## Parent consolidation')),critic:block('HUNTING.md','HUNTING.md#Coverage-critic waves',section(h,'## Coverage-critic waves')),candidateVerifier:block('VALIDATION-AND-REPORTING.md','VALIDATION-AND-REPORTING.md#Candidate-verifier prompt',fenced(v,'#### Candidate-verifier prompt')),phase5:block('VALIDATION-AND-REPORTING.md','VALIDATION-AND-REPORTING.md#Phase 5',section(v,'### Phase 5:','### Phase 6:')),branches:branchTexts(docs['report-schema.json']).map((text,i)=>block('report-schema.json',`report-schema.json#${['confirmed','needs_validation','rejected'][i]}`,text))};
 }
-export function supervisedArgs(runner,options,nodeExecutable=process.execPath,outputSchemaPath=null){
+export function supervisedArgs(runner,options,nodeExecutable=process.execPath,outputSchemaPath=null,sandboxPolicy=SANDBOX_INVOCATION_POLICY_VERSION,readFiles=null){
+  replaySandboxInvocationPolicy({sandboxInvocationPolicyVersion:sandboxPolicy});
   const path=`${dirname(nodeExecutable)}:/usr/bin:/bin:/usr/sbin:/sbin`;
-  return ['exec','--ignore-user-config','--ignore-rules','--ephemeral','--json','--skip-git-repo-check','--sandbox','read-only','-C',runner,'--model',options.model,'-c','project_doc_max_bytes=0','-c','skills.include_instructions=false','-c',`developer_instructions=${json(ROLE_AUTHORITY)}`,'-c','approval_policy="never"','-c',`model_reasoning_effort=${json(options.effort??'medium')}`,'-c','features.multi_agent=false','-c','web_search="disabled"','-c','shell_environment_policy.inherit="none"','-c',`shell_environment_policy.set={ PATH = ${json(path)} }`,...(outputSchemaPath?['--output-schema',outputSchemaPath]:[]),'-'];
+  return ['exec','--ignore-user-config','--ignore-rules','--ephemeral','--json','--skip-git-repo-check',...(sandboxPolicy===1?['--sandbox','read-only']:['--strict-config',...roleSandboxArgs(runner,nodeExecutable,outputSchemaPath,readFiles)]),'-C',runner,'--model',options.model,'-c','project_doc_max_bytes=0','-c','skills.include_instructions=false','-c',`developer_instructions=${json(ROLE_AUTHORITY)}`,'-c','approval_policy="never"','-c',`model_reasoning_effort=${json(options.effort??'medium')}`,'-c','features.multi_agent=false','-c','web_search="disabled"','-c','shell_environment_policy.inherit="none"','-c',`shell_environment_policy.set={ PATH = ${json(path)} }`,...(outputSchemaPath?['--output-schema',outputSchemaPath]:[]),'-'];
 }
 const sections={'recon-1a':['1','2','3','4','5','6'],'recon-1b':['1','2','3','4','5','6'],'recon-1c':['entry-surfaces','transformations-copies-sinks-limits'],'recon-1d':['1','2','3','4','5','6','7']};
 export function reconOutputSchema(role){

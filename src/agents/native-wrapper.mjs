@@ -10,6 +10,7 @@ import { ensureSafeDirectory, atomicWriteFile } from '../safe-io.mjs';
 import { validateAgentOptions } from '../config.mjs';
 import { PINS,SOURCES,OUTPUTS,nativeOptions,safeRead,sha256,sourceManifest,copySources,sameInputs,inspectNativeEvents,verifyCloudflareRecords,verifySourcePin,runOfficialValidators,parseAnthropicDocument } from './validation.mjs';
 import { promisify } from 'node:util';
+import {SANDBOX_INVOCATION_POLICY_VERSION,assertSandboxBackend,probeSandbox} from './codex-sandbox.mjs';
 import { cloudflarePrompt,codexArgs,claudeArgs } from './invocation.mjs';
 const execute=promisify(execFile);
 let active,interrupted=0;
@@ -50,7 +51,7 @@ async function main(){
   if(inside(cfg.artifactDir,stage)||inside(cfg.target,stage))throw new Error('Execution source staging must be outside target and raw artifacts');
   const copy=join(stage,'target'),runner=join(stage,'runner'),output=join(runner,'audit');await mkdir(runner,{mode:0o700});await mkdir(output,{mode:0o700});
   let copyBefore;try{await copySources(cfg.target,copy,inputs);copyBefore=await sourceManifest(copy);}catch(error){await rm(stage,{recursive:true,force:true});throw error;}
-  const manifest={schema:'sec-hub.native-agent/v1',id:cfg.id,...(cfg.id==='anthropic'?{invocationPolicyVersion:3}:{}),source:SOURCES[cfg.id],sourceCommit:PINS[cfg.id],nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,instructions,model:options.model,backend:cfg.id==='cloudflare'?'codex':'claude',...(cfg.id==='cloudflare'?{strategy:options.strategy}:{}),mode:cfg.id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',target:resolve(cfg.target),copyTarget:copy,inputs,copyBefore,startedAt:new Date().toISOString(),status:'incomplete',reasons:[],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
+  const manifest={schema:'sec-hub.native-agent/v1',id:cfg.id,...(cfg.id==='anthropic'?{invocationPolicyVersion:3}:{}),source:SOURCES[cfg.id],sourceCommit:PINS[cfg.id],nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,instructions,model:options.model,backend:cfg.id==='cloudflare'?'codex':'claude',...(cfg.id==='cloudflare'?{strategy:options.strategy,sandboxInvocationPolicyVersion:SANDBOX_INVOCATION_POLICY_VERSION}:{}),mode:cfg.id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',target:resolve(cfg.target),copyTarget:copy,inputs,copyBefore,startedAt:new Date().toISOString(),status:'incomplete',reasons:[],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
   try{
     checkInterrupted();let args,cwd,prompt='';
     if(cfg.id==='cloudflare'){
@@ -68,6 +69,7 @@ async function main(){
     if(cfg.id==='anthropic'&&process.env.USER)env.USER=process.env.USER;
     if(cfg.id==='cloudflare'&&process.env.CODEX_HOME)env.CODEX_HOME=process.env.CODEX_HOME;
     checkInterrupted();const version=await execute(cfg.command,[...cfg.args,'--version'],{cwd,env,timeout:10000,maxBuffer:64*1024,signal:cancellation.signal});manifest.backendVersion=(version.stdout||version.stderr).trim().slice(0,500);
+    if(cfg.id==='cloudflare'){assertSandboxBackend(manifest.backendVersion);manifest.sandboxProbe=await probeSandbox({command:cfg.command,args:cfg.args,execArgs:args,runner,targetFile:join(copy,inputs[0].path),skillFile:join(options.skillRoot,'skills/security-audit/SKILL.md'),nodeExecutable:process.execPath,env,signal:cancellation.signal});}
     let spawns=0;const onEvent=event=>{if(cfg.id==='cloudflare'&&event.type==='item.completed'&&event.item?.type==='collab_tool_call'&&event.item.tool==='spawn_agent'&&event.item.status==='completed'){spawns+=(event.item.receiver_thread_ids??[]).length;if(spawns>options.maxAgents){manifest.reasons.push('Native delegation budget exceeded');active?.kill('SIGTERM');}}};
     const result=await run(cfg.command,[...cfg.args,...args],{cwd,env,prompt,artifactDir:cfg.artifactDir,onEvent});
     for(const file of ['native-events.jsonl','native-stderr.log'])manifest.preRedactionHashes[file]=sha256(await safeRead(join(cfg.artifactDir,file)));

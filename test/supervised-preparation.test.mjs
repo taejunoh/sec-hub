@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,rm,readdir,access,symlink} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
-import {buildRolePrompt,loadCloudflareContracts} from '../src/agents/cloudflare-prompts.mjs';
+import {buildRolePrompt,loadCloudflareContracts,supervisedArgs} from '../src/agents/cloudflare-prompts.mjs';
 import {preflightPreparationLocations} from '../src/agents/cloudflare-preparation.mjs';
-import {runSupervisedCloudflare} from '../src/agents/supervised-cloudflare.mjs';
+import {registerSupervisedMockSandboxBackend} from './helpers/supervised-mock-sandbox-backend.mjs';
+registerSupervisedMockSandboxBackend();
+const {runSupervisedCloudflare}=await import('../src/agents/supervised-cloudflare.mjs');
 import {validateSupervisedCloudflare,finalizeSupervisedCloudflare} from '../src/agents/supervised-validation.mjs';
 import {PINS,sha256,safeRead} from '../src/agents/validation.mjs';
 import {cloudflareSourceRoot} from './helpers/cloudflare-source.mjs';
@@ -15,7 +17,7 @@ const json=x=>JSON.stringify(x,null,2)+'\n';
 test('preparation location preflight pins source before any mkdir and rejects old-run overlaps',async()=>{
   const root=await mkdtemp(join(tmpdir(),'cf-prep-path-'));try{const old=join(root,'old'),target=join(root,'target'),workRoot=join(root,'work'),out=join(root,'new'),source=join(old,'raw/cloudflare/execution-manifest.json');await mkdir(join(old,'raw/cloudflare'),{recursive:true});await mkdir(target);await writeFile(source,'{}');const options={preparationFrom:source,preparationSha256:sha256('{}'),target,workRoot,out};await preflightPreparationLocations(options);await assert.rejects(access(out));await assert.rejects(access(workRoot));for(const bad of [{preparationSha256:'0'.repeat(64)},{out:join(old,'nested')},{out:root},{workRoot:join(old,'stage')},{target:old}])await assert.rejects(preflightPreparationLocations({...options,...bad}),/hash|digest|overlap|disjoint|source|preparation/i);await symlink(old,join(root,'alias'));await assert.rejects(preflightPreparationLocations({...options,out:join(root,'alias/new')}),/link|overlap|preparation/i);}finally{await rm(root,{recursive:true,force:true});}
 });
-async function fixture(mode='zero',{legacyPrompt=false}={}){
+async function fixture(mode='zero',{legacyPrompt=false,legacySandbox=false}={}){
   const root=await mkdtemp(join(tmpdir(),'cf-prep-source-')),target=join(root,'target'),old=join(root,'source-run/raw/cloudflare'),artifactDir=join(root,'new-run/raw/cloudflare');await mkdir(target);await writeFile(join(target,'target.mjs'),'export const run = input => input;\n');
   const base={id:'cloudflare',command:process.execPath,args:[resolve('test/fixtures/supervised-fake-codex.mjs'),mode],target,agentOptions:{strategy:'supervised-codex-workers',skillRoot,workRoot:join(root,'staging'),revision:PINS.cloudflare,model:'gpt-6.1-sol',effort:'medium',profile:'quick',maxAgents:20}};
   assert.equal(await runSupervisedCloudflare({...base,artifactDir:old}),0);
@@ -31,6 +33,7 @@ async function fixture(mode='zero',{legacyPrompt=false}={}){
     }
     await writeFile(sourcePath,json(m));
   }
+  if(legacySandbox){delete m.sandboxInvocationPolicyVersion;for(const r of m.roles){delete r.sandboxProbe;const schema=r.outputSchema?.file;r.args=[...base.args,...supervisedArgs(m.runner,base.agentOptions,m.nativeNodeExecutable,schema?resolve(old,schema):null,1)];}await writeFile(sourcePath,json(m));}
   const sourceBytes=await readFile(sourcePath),payload={...base,artifactDir,agentOptions:{...base.agentOptions,preparationFrom:sourcePath,preparationSha256:sha256(sourceBytes)}},ctx={target,artifactDir,exitCode:0,config:{tools:{cloudflare:{command:base.command,args:base.args,agentOptions:payload.agentOptions}}}};
   return {root,old,sourcePath,sourceBytes,payload,ctx,async read(name){return JSON.parse(await readFile(join(artifactDir,name),'utf8'));},async dispose(){await rm(root,{recursive:true,force:true});}};
 }
@@ -57,4 +60,8 @@ test('legacy preparation keeps its exact receipt format while fresh continuation
     assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);
     assert.deepEqual(await readFile(f.sourcePath),f.sourceBytes);
   }finally{await f.dispose();}
+});
+
+test('legacy sandbox preparation remains legacy evidence while fresh roles use restricted policy',{skip:!available},async()=>{
+ const f=await fixture('zero',{legacySandbox:true,legacyPrompt:true});try{assert.equal(await runSupervisedCloudflare(f.payload),0);const m=await f.read('execution-manifest.json');assert.equal(m.sandboxInvocationPolicyVersion,2);assert.equal(Object.hasOwn(m.preparation,'sourceSandboxInvocationPolicyVersion'),false);assert.deepEqual((await validateSupervisedCloudflare(f.ctx)).findings,[]);assert.match(await readFile(join(f.payload.artifactDir,'REPORT.md'),'utf8'),/Legacy preparation was not executed under the restricted read boundary/);assert.deepEqual(await readFile(f.sourcePath),f.sourceBytes);}finally{await f.dispose();}
 });

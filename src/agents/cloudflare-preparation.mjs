@@ -1,5 +1,6 @@
 // Narrow recovery of a completed native preparation prefix whose trusted host
 // constructor alone failed the pinned ledger's code-unit sorting check.
+import {replaySandboxInvocationPolicy,validateSandboxProbe} from './codex-sandbox.mjs';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {join,resolve,dirname,basename,relative,isAbsolute} from 'node:path';
 import {assertSafeDirectory} from '../safe-io.mjs';
@@ -27,7 +28,7 @@ function optionsIdentity(options,command,args,nativeNodeExecutable,nativeNodeVer
 export async function inspectCloudflarePreparation({options,target,artifactDir,command,args=[],nativeNodeExecutable=process.execPath,nativeNodeVersion=process.versions.node,verificationOptions={}}){
   const location=await preflightPreparationLocations({preparationFrom:options.preparationFrom,preparationSha256:options.preparationSha256,target,artifactDir,workRoot:options.workRoot}),m=JSON.parse(location.sourceManifestBytes),root=location.sourceArtifactRoot;
   if(m.schema!=='sec-hub.native-agent/v1'||m.id!=='cloudflare'||m.strategy!==STRATEGY||m.source!==SOURCES.cloudflare||m.sourceCommit!==PINS.cloudflare||m.backend!=='codex'||m.mode!=='supervised-official-security-audit-skill'||m.preparation!==undefined)fail('wrong source kind, pin, strategy or recursive preparation');
-  const promptVersion=replayPromptVersion(m);
+  const promptVersion=replayPromptVersion(m),sandboxPolicy=replaySandboxInvocationPolicy(m);
   if(m.status!=='incomplete'||!Array.isArray(m.reasons)||m.reasons.length!==1||!/^Official coverage ledger invalid: \$\[\d+\]\.coverage_id: units must be sorted lexicographically$/.test(m.reasons[0]))fail('source is not the narrow host ledger sorting failure');
   if(m.model!==options.model||m.invocation?.command!==command||!sameInputs(m.invocation.args,args)||m.nativeNodeExecutable!==nativeNodeExecutable||m.nativeNodeVersion!==nativeNodeVersion||!text(m.backendVersion)||resolve(m.runner??'','../..')!==resolve(options.workRoot)||resolve(m.copyTarget??'','../runner')!==resolve(m.runner??''))fail('native configuration or work root differs');
   if(!Array.isArray(m.roles)||stable(m.roles.map(r=>r.role))!==stable(prefixRoles))fail('source must contain exactly four baseline recon roles and one planner; no downstream roles');
@@ -48,8 +49,9 @@ export async function inspectCloudflarePreparation({options,target,artifactDir,c
     const names=['prompt.txt','events.jsonl','stderr.log','response.json'].map(f=>`${base}/${f}`);if(schemaFile)names.push(schemaFile);
     for(const name of names){if(!m.retainedFiles.includes(name)||!fileMap.has(name))fail('required preparation evidence missing');const data=await safeRead(join(root,name));if(sha256(data)!==fileMap.get(name).sha256)fail('source evidence changed during read');buffers.set(name,data);required.push(name);}
     if(schema){if(stable(r.outputSchema)!==stable({file:schemaFile,sha256:sha256(schemaText),bytes:Buffer.byteLength(schemaText)})||buffers.get(schemaFile).toString()!==schemaText)fail('native recon schema differs');}else if(r.outputSchema!==undefined)fail('planner must not have a replacement schema');
-    const expectedArgs=[...args,...supervisedArgs(m.runner,options,m.nativeNodeExecutable,schemaFile?resolve(root,schemaFile):null)];
+    const expectedArgs=[...args,...supervisedArgs(m.runner,options,m.nativeNodeExecutable,schemaFile?resolve(root,schemaFile):null,sandboxPolicy,expected.readFiles)];
     if(r.command!==command||r.cwd!==m.runner||stable(r.args)!==stable(expectedArgs)||r.promptSha256!==sha256(expected.prompt)||r.promptBytes!==Buffer.byteLength(expected.prompt)||stable(r.sourceBlocks)!==stable(expected.sourceBlocks)||buffers.get(`${base}/prompt.txt`).toString()!==expected.prompt)fail('native prefix invocation/prompt reconstruction differs');
+    if(sandboxPolicy===2)validateSandboxProbe(r.sandboxProbe,false,m.backendVersion);
     const events=buffers.get(`${base}/events.jsonl`).toString().split('\n').filter(l=>l.trim()).map(l=>JSON.parse(l)),native=inspectRoleEvidence(events,r,expected,c);
     if(threads.has(native.threadId)||r.threadId!==native.threadId||buffers.get(`${base}/response.json`).toString()!==native.finalText)fail('reused thread or changed native final message');threads.add(native.threadId);
     if(r.role.startsWith('recon-')){validateRecon(native.response,r.role,m.inputs);recon.push(native.response);}else proposal=native.response;
@@ -62,7 +64,7 @@ export async function inspectCloudflarePreparation({options,target,artifactDir,c
   const snapshotFiles=required.sort().map(path=>({path,sha256:fileMap.get(path)?.sha256??sha256(buffers.get(path)),size:buffers.get(path).length}));
   // Preserve the exact historical receipt shape for unversioned source cohorts.
   // The source snapshot itself binds its version independently of fresh roles.
-  const receipt={schema:receiptSchema,...(Object.hasOwn(m,'promptVersion')?{sourcePromptVersion:promptVersion}:{}),sourceManifestPath:location.sourceManifestPath,sourceArtifactRoot:root,sourceRunRoot:location.sourceRunRoot,sourceManifestSha256:options.preparationSha256,sourceStatus:m.status,sourceReasons:[...m.reasons],sourceArtifactFiles:files,snapshotRoot,snapshotFiles,chargedAgents:5,inputSha256:sha256(JSON.stringify(m.inputs)),sourceCommit:m.sourceCommit,instructions:m.instructions,nativeOptions:optionsIdentity(options,command,args,nativeNodeExecutable,nativeNodeVersion),backendVersion:m.backendVersion,roles:proofs};
+  const receipt={schema:receiptSchema,...(Object.hasOwn(m,'sandboxInvocationPolicyVersion')?{sourceSandboxInvocationPolicyVersion:sandboxPolicy}:{}),...(Object.hasOwn(m,'promptVersion')?{sourcePromptVersion:promptVersion}:{}),sourceManifestPath:location.sourceManifestPath,sourceArtifactRoot:root,sourceRunRoot:location.sourceRunRoot,sourceManifestSha256:options.preparationSha256,sourceStatus:m.status,sourceReasons:[...m.reasons],sourceArtifactFiles:files,snapshotRoot,snapshotFiles,chargedAgents:5,inputSha256:sha256(JSON.stringify(m.inputs)),sourceCommit:m.sourceCommit,instructions:m.instructions,nativeOptions:optionsIdentity(options,command,args,nativeNodeExecutable,nativeNodeVersion),backendVersion:m.backendVersion,roles:proofs};
   return {receipt,state,buffers,source:m,recon,retainedFiles:snapshotFiles.map(f=>`${snapshotRoot}/${f.path}`),threadIds:[...threads],agentIds:[...agentIds]};
 }
 export async function materializeCloudflarePreparation(prepared,artifactDir){

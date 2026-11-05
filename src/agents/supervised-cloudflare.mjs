@@ -10,6 +10,7 @@ import { validateAgentOptions } from '../config.mjs';
 import { nativeOptions, PINS, SOURCES, OUTPUTS, safeRead, sha256, sourceManifest, copySources, sameInputs, verifySourcePin, runOfficialValidators } from './validation.mjs';
 import { loadCloudflareContracts, buildRolePrompt, supervisedArgs, reconOutputSchema, supervisedRoleTimeoutMs, SUPERVISED_WALL_TIMEOUT_MS, STRATEGY, LABEL, CLOUDFLARE_PROMPT_VERSION } from './cloudflare-prompts.mjs';
 import { validateRecon, preparePlan, assignHunter, applyHunter, applyCritic, applyVerifier, inspectRoleEvidence, assertObservedPolicy, renderSupervisedReports, officialHelpers, validateRecords } from './supervised-validation.mjs';
+import {SANDBOX_INVOCATION_POLICY_VERSION,assertSandboxBackend,probeSandbox} from './codex-sandbox.mjs';
 import {inspectCloudflarePreparation,materializeCloudflarePreparation} from './cloudflare-preparation.mjs';
 const execute=promisify(execFile),json=x=>JSON.stringify(x,null,2)+'\n';
 const inside=(parent,child)=>{const p=relative(resolve(parent),resolve(child));return p!=='..'&&!p.startsWith('..'+sep)&&!isAbsolute(p);};
@@ -56,11 +57,11 @@ export async function runSupervisedCloudflare(payload){
   const stage=await mkdtemp(join(options.workRoot,'sec-hub-supervised-')),copy=join(stage,'target'),runner=join(stage,'runner'),active=new Set();
   try{
   await mkdir(runner,{mode:0o700});await copySources(payload.target,copy,inputs);
-  const manifest={schema:'sec-hub.native-agent/v1',promptVersion:CLOUDFLARE_PROMPT_VERSION,id:'cloudflare',strategy:STRATEGY,label:LABEL,adapted:true,source:SOURCES.cloudflare,sourceCommit:PINS.cloudflare,instructions,nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,backend:'codex',model:options.model,mode:'supervised-official-security-audit-skill',target:resolve(payload.target),copyTarget:copy,runner,inputs,copyBefore:await sourceManifest(copy),startedAt:new Date().toISOString(),status:'incomplete',reasons:[],invocation:{command:payload.command,args:payload.args},roles:[],retainedFiles:[...OUTPUTS.cloudflare],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
+  const manifest={schema:'sec-hub.native-agent/v1',promptVersion:CLOUDFLARE_PROMPT_VERSION,sandboxInvocationPolicyVersion:SANDBOX_INVOCATION_POLICY_VERSION,id:'cloudflare',strategy:STRATEGY,label:LABEL,adapted:true,source:SOURCES.cloudflare,sourceCommit:PINS.cloudflare,instructions,nativeNodeExecutable:process.execPath,nativeNodeVersion:process.versions.node,backend:'codex',model:options.model,mode:'supervised-official-security-audit-skill',target:resolve(payload.target),copyTarget:copy,runner,inputs,copyBefore:await sourceManifest(copy),startedAt:new Date().toISOString(),status:'incomplete',reasons:[],invocation:{command:payload.command,args:payload.args},roles:[],retainedFiles:[...OUTPUTS.cloudflare],preRedactionHashes:{},hashScope:'native retained bytes before core redaction'};
   const metadata={run_id:`supervised-${Date.now()}-${process.pid}`,repo:resolve(payload.target),target:copy,source_ref:`sha256:${sha256(JSON.stringify(inputs))}`,profile:'quick',scope_paths:inputs.map(i=>i.path),budget:{max_agents:options.maxAgents,spent:0,planned_minimum:8},execution_policy:'sandboxed-source-and-local-only',selected_companion_files:[],prior_run_paths:[],shared_file_owners:Object.fromEntries(OUTPUTS.cloudflare.map(f=>[f,'trusted-supervisor'])),run_status:'in_progress',strategy:STRATEGY};
-  if(prepared){manifest.preparation=prepared.receipt;manifest.retainedFiles.push(...prepared.retainedFiles);metadata.preparation={source_manifest:prepared.receipt.sourceManifestPath,source_manifest_sha256:prepared.receipt.sourceManifestSha256,source_status:prepared.receipt.sourceStatus,charged_agents:charged};if(!sameInputs(manifest.copyBefore,prepared.source.inputs))throw new Error('Continuation source copy differs from preparation inputs');}
-  const knownThreads=new Set(prepared?.threadIds??[]),signalState={code:0},deadline=Date.now()+SUPERVISED_WALL_TIMEOUT_MS,handlers=[];let state=prepared?.state??null;
-  const stop=code=>{signalState.code=code;const owned=[...active];for(const pid of owned)try{process.kill(-pid,'SIGTERM');}catch{}
+  if(prepared){manifest.preparation=prepared.receipt;manifest.retainedFiles.push(...prepared.retainedFiles);metadata.preparation={source_manifest:prepared.receipt.sourceManifestPath,source_manifest_sha256:prepared.receipt.sourceManifestSha256,source_status:prepared.receipt.sourceStatus,charged_agents:charged,source_sandbox_invocation_policy_version:prepared.source.sandboxInvocationPolicyVersion??1};if(!sameInputs(manifest.copyBefore,prepared.source.inputs))throw new Error('Continuation source copy differs from preparation inputs');}
+  const knownThreads=new Set(prepared?.threadIds??[]),signalState={code:0},probeCancellation=new AbortController(),deadline=Date.now()+SUPERVISED_WALL_TIMEOUT_MS,handlers=[];let state=prepared?.state??null;
+  const stop=code=>{signalState.code=code;probeCancellation.abort();const owned=[...active];for(const pid of owned)try{process.kill(-pid,'SIGTERM');}catch{}
     // Outer runProcess escalates at300ms. Kill detached child groups first,
     // retaining this timer even if a leader exits before its descendants.
     setTimeout(()=>{for(const pid of owned)try{process.kill(-pid,'SIGKILL');}catch{}},80);
@@ -87,7 +88,10 @@ export async function runSupervisedCloudflare(payload){
     if(schema){record.outputSchema={file:schemaFile,sha256:sha256(schemaText),bytes:Buffer.byteLength(schemaText)};manifest.retainedFiles.push(schemaFile);await writeFile(resolve(payload.artifactDir,schemaFile),schemaText,{flag:'wx',mode:0o400});}
     await writeFile(join(dir,'prompt.txt'),expected.prompt,{flag:'wx',mode:0o600});
     try{
-      await runRoleProcess(payload.command,[...payload.args,...supervisedArgs(runner,options,process.execPath,schemaFile?resolve(payload.artifactDir,schemaFile):null)],{cwd:runner,env:manifest.nativeEnvironment,prompt:expected.prompt,dir,record,deadline,active,signalState,onEvent:event=>assertObservedPolicy(event,expected)});
+      const execArgs=supervisedArgs(runner,options,process.execPath,schemaFile?resolve(payload.artifactDir,schemaFile):null,manifest.sandboxInvocationPolicyVersion,expected.readFiles);
+      record.sandboxProbe=await probeSandbox({command:payload.command,args:payload.args,execArgs,runner,targetFile:join(copy,inputs[0].path),skillFile:expected.readFiles[0],nodeExecutable:process.execPath,env:manifest.nativeEnvironment,signal:probeCancellation.signal});
+      if(signalState.code||Date.now()>=deadline)throw new Error('Supervised workflow interrupted or wall-time exceeded');
+      await runRoleProcess(payload.command,[...payload.args,...execArgs],{cwd:runner,env:manifest.nativeEnvironment,prompt:expected.prompt,dir,record,deadline,active,signalState,onEvent:event=>assertObservedPolicy(event,expected)});
       const events=(await safeRead(join(dir,'events.jsonl'))).toString().split('\n').filter(s=>s.trim()).map(s=>JSON.parse(s));
       const starts=events.filter(e=>e.type==='thread.started');if(starts.length===1)record.threadId=starts[0].thread_id;
       if(record.threadId&&(knownThreads.has(record.threadId)||manifest.roles.some(r=>r!==record&&r.threadId===record.threadId)))throw new Error('Native fresh thread identity reused');if(record.threadId)knownThreads.add(record.threadId);
@@ -112,6 +116,7 @@ export async function runSupervisedCloudflare(payload){
     const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:stage,LANG:'en_US.UTF-8'};if(process.env.CODEX_HOME)env.CODEX_HOME=process.env.CODEX_HOME;
     // Environment has authentication discovery paths only; no auth file is read.
     const version=await execute(payload.command,[...payload.args,'--version'],{cwd:runner,env,timeout:10000,maxBuffer:64*1024});manifest.backendVersion=(version.stdout||version.stderr).trim().slice(0,500);manifest.nativeEnvironment=env;
+    assertSandboxBackend(manifest.backendVersion);
     if(prepared&&manifest.backendVersion!==prepared.receipt.backendVersion)throw new Error('Native backend version changed since preparation');
     if(!prepared){
     const reconResults=await Promise.allSettled(['recon-1a','recon-1b','recon-1c','recon-1d'].map(role=>invoke(role,role)));

@@ -127,7 +127,7 @@ test('real native terminal failures survive missing-output diagnostics without l
 });
 test('native policy revalidation binds the recorded Node runtime rather than verifier PATH',async()=>{
   const {codexArgs}=await import('../src/agents/invocation.mjs');
-  const args=codexArgs('/runner',{model:'gpt-6.1-sol'},'/recorded/runtime/bin/node');
+  const args=codexArgs('/runner',{model:'gpt-6.1-sol',skillRoot:'/pinned'},'/recorded/runtime/bin/node');
   assert.ok(args.includes('shell_environment_policy.set={ PATH = "/recorded/runtime/bin:/usr/bin:/bin:/usr/sbin:/sbin" }'));
 });
 
