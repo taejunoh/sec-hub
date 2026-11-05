@@ -106,8 +106,32 @@ jobs:
       - name: Run actual packaged executable and observe shutdown
         shell: pwsh
         run: |
-          node desktop/smoke.mjs --executable "$env:RUNNER_TEMP/sec-hub-desktop-build/package/Sec Hub/Sec Hub.exe" --out "$env:RUNNER_TEMP/sec-hub-desktop-evidence/smoke" 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/smoke.log"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $profileTemp = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'Temp'
+          $env:TEMP = (Resolve-Path -LiteralPath $profileTemp).ProviderPath
+          $env:TMP = $env:TEMP
+          $smokeEvidence = "$env:RUNNER_TEMP/sec-hub-desktop-evidence/smoke"
+          New-Item -ItemType Directory -Path $smokeEvidence | Out-Null
+          $smokeOut = [System.IO.Directory]::CreateTempSubdirectory('sec-hub-desktop-smoke-').FullName
+          try {
+            node desktop/smoke.mjs --executable "$env:RUNNER_TEMP/sec-hub-desktop-build/package/Sec Hub/Sec Hub.exe" --out $smokeOut 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/sec-hub-desktop-evidence/smoke.log"
+            $smokeExit = $LASTEXITCODE
+          } finally {
+            try {
+              $files = @('application-stdout.log', 'application-stderr.log', 'smoke-evidence.json', 'smoke-failure.json') |
+                ForEach-Object { Join-Path $smokeOut $_ }
+              $summaries = Get-ChildItem -LiteralPath $smokeOut -Directory -Filter 'private-smoke-*' -Attributes !ReparsePoint |
+                ForEach-Object { Join-Path $_.FullName 'summary.json' }
+              foreach ($source in @($files) + @($summaries)) {
+                $file = Get-Item -LiteralPath $source -ErrorAction SilentlyContinue
+                if ($file -and -not $file.PSIsContainer -and -not ($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                  Copy-Item -LiteralPath $file.FullName -Destination $smokeEvidence
+                }
+              }
+            } finally {
+              Remove-Item -LiteralPath $smokeOut -Recurse -Force
+            }
+          }
+          exit $smokeExit
       - name: Preserve native package and raw evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
