@@ -92,6 +92,7 @@ test('desktop report IDs resolve on the same origin only inside the authorized d
   const { runs } = await fixture(t);
   const privateRun = JSON.parse(await readFile(new URL('run.json', sample), 'utf8'));
   privateRun.id = 'desktop-example';
+  privateRun.target.path = 'C:\\Users\\Developer\\repo';
   await writeFile(join(runs, 'run.json'), JSON.stringify(privateRun));
   const server = await startDashboard({ runs: samplePath, desktopCatalog: { runs, token } });
   t.after(() => server.close());

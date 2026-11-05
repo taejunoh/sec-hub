@@ -15,6 +15,25 @@ const digest = value => createHash('sha256').update(key(value)).digest('hex');
 const clean = finding => { const {sources,sourceRecords,...rest}=finding; return canonical(rest); };
 const nonempty = x => typeof x==='string' && x.trim().length>0;
 
+const driveAbsolute = /^[a-z]:\//i;
+const windowsDevice = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|(?:COM|LPT)[1-9¹²³])$/i;
+function validWindowsComponents(value) {
+  return value.split('/').every((component) => !component || component === '.' || component === '..'
+    || (!/[<>:"|?*\x00-\x1f]|[ .]$/.test(component) && !windowsDevice.test(component.split('.')[0].trimEnd())));
+}
+
+/** Canonicalize saved metadata independently of the host filesystem. Never opens the target. */
+export function normalizeSavedTargetPath(value) {
+  if (!nonempty(value) || !value.isWellFormed() || /[\0\r\n]/.test(value)) return null;
+  const forwardSlashes = value.replaceAll('\\', '/');
+  if (driveAbsolute.test(forwardSlashes)) {
+    const tail = forwardSlashes.slice(2);
+    return validWindowsComponents(tail) ? forwardSlashes[0].toUpperCase() + ':' + path.posix.resolve('/', tail) : null;
+  }
+  if (value.startsWith('/') && !forwardSlashes.startsWith('//')) return path.posix.resolve('/', value);
+  return null;
+}
+
 function leaves(findings, owner) {
   if (!Array.isArray(findings)) throw new TypeError('findings must be arrays');
   const result=[];
@@ -33,7 +52,8 @@ function leaves(findings, owner) {
 function validate(run) {
   if(!run||run.schemaVersion!==1||!nonempty(run.id)||!['completed','partial','failed'].includes(run.status))throw new TypeError('Invalid v1 run or run status');
   for(const field of ['startedAt','endedAt'])if(!nonempty(run[field])||!Number.isFinite(Date.parse(run[field])))throw new TypeError(`run.${field} must be a valid timestamp`);
-  if(!run.target||!nonempty(run.target.path)||!path.posix.isAbsolute(run.target.path)||/[\0\r\n]/.test(run.target.path))throw new TypeError('run target must be an absolute saved path');
+  const target=normalizeSavedTargetPath(run.target?.path);
+  if(!target)throw new TypeError('run target must be an absolute saved path');
   if(!Array.isArray(run.tools))throw new TypeError('run.tools must be an array');
   const tools=new Map(), findings=[];
   for(const t of run.tools){
@@ -46,11 +66,20 @@ function validate(run) {
   }
   const top=leaves(run.findings);
   if(key(top.map(key).sort(order))!==key(findings.map(key).sort(order)))throw new TypeError('run.findings leaf multiset differs from tool findings');
-  return {run,tools,findings,target:path.posix.resolve('/',run.target.path)};
+  return {run,tools,findings,target};
 }
 function locationPath(value,target){
   if(!nonempty(value))return {value:null,unsafe:false};
   const input=value.replaceAll('\\','/');
+  if (driveAbsolute.test(target)) {
+    if (driveAbsolute.test(input)) {
+      const absolute = normalizeSavedTargetPath(input);
+      if (!absolute || absolute.slice(0, 2) !== target.slice(0, 2)) return { value: null, unsafe: true };
+      const rel = path.posix.relative(target.slice(2), absolute.slice(2));
+      return { value: rel || '.', unsafe: rel === '..' || rel.startsWith('../') };
+    }
+    if (input.startsWith('/') || !input.isWellFormed() || !validWindowsComponents(input)) return { value: null, unsafe: true };
+  }
   const normalized=path.posix.normalize(input);
   if(path.posix.isAbsolute(normalized)){
     const rel=path.posix.relative(target,normalized);

@@ -77,3 +77,29 @@ test('identity v1 frozen tuples, baseline coverage gap reasons and aggregate pro
  const dep=finding();assert.equal(compareRuns(run(),run([dep])).entries[0].identity,hash([1,'osv','dependency','npm:a','1','CVE-1','a.lock']));
  const base=run([],{status:'failed',provenance:{kind:'aggregate',sourceRuns:[{id:'original',status:'failed'}]},tools:[{id:'osv',selected:true,status:'failed',findings:[]}]});const current=run([dep],{provenance:{kind:'aggregate',sourceRuns:[{id:'retry',status:'completed'}]}});const snapshot=structuredClone(base.provenance);const result=compareRuns(base,current);assert.ok(result.entries[0].reasons.includes('baseline:tool-failed'));assert.deepEqual(result.baseline.provenance,snapshot);assert.deepEqual(result.current.provenance,current.provenance);result.baseline.provenance.sourceRuns[0].id='mutated';assert.deepEqual(base.provenance,snapshot);
 });
+
+test('Windows snapshots compare on any host and preserve relative finding identity', () => {
+ const absolute = finding({ location: { path: 'C:\\Users\\Developer\\repo\\deps\\a.lock', package: 'npm:a', version: '1' } });
+ const relative = finding({ location: { ...absolute.location, path: 'deps/a.lock' } });
+ const baseline = run([absolute], { target: { path: 'c:\\Users\\Developer\\repo' } });
+ const current = run([relative], { target: { path: 'C:/Users/Developer/repo/' } });
+ const comparison = compareRuns(baseline, current);
+ assert.equal(comparison.counts.existing, 1);
+ assert.equal(comparison.entries[0].identityMethod, 'dependency');
+ assert.equal(comparison.entries[0].identity, compareRuns(run([relative]), run([relative])).entries[0].identity);
+ assert.throws(() => compareRuns(baseline, { ...current, target: { path: 'D:/Users/Developer/repo' } }), /target paths differ/i);
+});
+
+test('ambiguous Windows targets and locations fail conservatively', () => {
+ for (const savedPath of ['C:repo', '\\repo', '//server/share/repo', '\\\\server\\share\\repo', '\\\\?\\C:\\repo', 'C:\\repo:stream', 'C:\\repo\\CON.txt', 'C:\\repo.']) {
+  const invalid = run([], { target: { path: savedPath } });
+  assert.throws(() => compareRuns(invalid, invalid), /absolute saved path/i, savedPath);
+ }
+ const current = run([], { target: { path: 'C:\\repo' } });
+ for (const location of ['D:\\repo\\a.lock', 'C:\\elsewhere\\a.lock', 'C:repo\\a.lock', '\\repo\\a.lock', '\\\\server\\share\\a.lock', 'a.lock:stream', '../outside']) {
+  const suspect = finding({ location: { path: location, package: 'npm:a', version: '1' } });
+  const comparison = compareRuns(run([suspect], { target: current.target }), current);
+  assert.equal(comparison.counts.unobserved, 1, location);
+  assert.equal(comparison.entries[0].identityMethod, 'weak', location);
+ }
+});

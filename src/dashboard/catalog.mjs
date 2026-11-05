@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
-import { compareRuns, comparisonGate } from '../compare.mjs';
+import { compareRuns, comparisonGate, normalizeSavedTargetPath } from '../compare.mjs';
 import { normalizeFindings } from '../reports.mjs';
 
 const HARD = Object.freeze({ directoryEntries: 512, artifacts: 128, artifactBytes: 20 * 1024 * 1024, totalBytes: 64 * 1024 * 1024, findingLeavesPerRun: 5000, findingLeavesTotal: 20000 });
@@ -150,9 +150,10 @@ function validateRun(payload, limits, state) {
 function validComparison(payload, limits, state) {
   if (!isObject(payload) || payload.schemaVersion !== 1 || payload.kind !== 'sec-hub.comparison' || payload.identityVersion !== 1 || !['complete', 'incomplete'].includes(payload.status)) throw coded('invalid_artifact');
   for (const side of [payload.baseline, payload.current]) {
-    if (!isObject(side) || !nonempty(side.id) || !isObject(side.target) || !nonempty(side.target.path) || !path.posix.isAbsolute(side.target.path) || !['completed', 'partial', 'failed'].includes(side.status)) throw coded('invalid_artifact');
+    if (!isObject(side) || !nonempty(side.id) || !isObject(side.target) || !['completed', 'partial', 'failed'].includes(side.status)) throw coded('invalid_artifact');
   }
-  if (path.posix.resolve('/', payload.baseline.target.path) !== path.posix.resolve('/', payload.current.target.path)) throw coded('invalid_artifact');
+  const baselineTarget = normalizeSavedTargetPath(payload.baseline.target.path);
+  if (!baselineTarget || baselineTarget !== normalizeSavedTargetPath(payload.current.target.path)) throw coded('invalid_artifact');
   if (!Array.isArray(payload.coverage) || !Array.isArray(payload.entries) || !Array.isArray(payload.notices) || payload.notices.some((item) => typeof item !== 'string')) throw coded('invalid_artifact');
   const toolIds = new Set();
   for (const item of payload.coverage) {

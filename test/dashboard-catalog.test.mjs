@@ -266,3 +266,16 @@ test('keeps permission failures visible instead of treating them as absent artif
     assert.equal(entry.error.code, 'artifact_unreadable');
   } finally { fsPromises.lstat = originalLstat; syncBuiltinESMExports(); }
 }));
+
+test('native Windows target paths in saved runs and comparisons are valid on any host', async () => sandbox(async (root) => {
+  const baseline = run('windows-baseline', [], { target: { path: 'c:\\Users\\Developer\\repo' } });
+  const current = run('windows-current', [finding], { target: { path: 'C:/Users/Developer/repo/' } });
+  await writeFile(path.join(root, 'run.json'), bytes(current));
+  const initial = await loadCatalog(root);
+  assert.equal(initial.catalog.artifacts[0].state, 'ready');
+  assert.equal(initial.catalog.artifacts[0].summary.runId, 'windows-current');
+  const comparison = compareRuns(baseline, current);
+  await writeFile(path.join(root, 'comparison.json'), bytes(comparison));
+  const { catalog } = await loadCatalog(root);
+  assert.equal(catalog.artifacts.find((entry) => entry.kind === 'comparison').state, 'ready');
+}));
