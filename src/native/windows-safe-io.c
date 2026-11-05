@@ -201,9 +201,9 @@ static BOOL fixed_ntfs(HANDLE handle, const WCHAR *drive)
 
 static HANDLE open_directory(const WCHAR *path)
 {
-    // Holding a non-delete-shared handle pins each checked ancestor throughout
-    // this invocation. The ACL independently forbids foreign reparse changes.
-    return CreateFileW(path, READ_CONTROL | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+    // Request directory data access so the handle participates in sharing checks.
+    // Denying delete sharing pins each checked ancestor until the operation ends.
+    return CreateFileW(path, FILE_LIST_DIRECTORY | READ_CONTROL | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
         NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
 }
 
@@ -297,19 +297,27 @@ static BOOL write_frames(HANDLE file)
     }
 }
 
-static BOOL replace_file(const WCHAR *name, const WCHAR *temporary, HANDLE directory, SECURITY_ATTRIBUTES *attributes)
+static BOOL replace_file(const WCHAR *name, const WCHAR *temporary, SECURITY_ATTRIBUTES *attributes)
 {
     size_t length = wcslen(name), temp_length = wcslen(temporary);
     if (!valid_component(name, length) || !valid_component(temporary, temp_length) ||
-        !append_component(temporary, temp_length)) return reject("unsafe output filename", ERROR_INVALID_NAME);
-    const DWORD info_size = (DWORD)(sizeof(FILE_RENAME_INFO) + length * sizeof(WCHAR));
+        !append_component(name, length)) return reject("unsafe output filename", ERROR_INVALID_NAME);
+
+    // Use the canonical verbatim name in the pinned directory. The relative
+    // RootDirectory form returned ERROR_INVALID_PARAMETER on hosted NTFS.
+    size_t destination_length = wcslen(candidate);
+    const DWORD info_size = (DWORD)(sizeof(FILE_RENAME_INFO) + destination_length * sizeof(WCHAR));
     FILE_RENAME_INFO *info = calloc(1, info_size);
     if (!info) return reject("could not allocate rename information", ERROR_OUTOFMEMORY);
     info->ReplaceIfExists = TRUE;
-    info->RootDirectory = directory;
-    info->FileNameLength = (DWORD)(length * sizeof(WCHAR));
-    memcpy(info->FileName, name, (length + 1) * sizeof(WCHAR));
+    info->RootDirectory = NULL;
+    info->FileNameLength = (DWORD)(destination_length * sizeof(WCHAR));
+    memcpy(info->FileName, candidate, (destination_length + 1) * sizeof(WCHAR));
 
+    if (!append_component(temporary, temp_length)) {
+        free(info);
+        return reject("unsafe temporary filename", ERROR_INVALID_NAME);
+    }
     HANDLE file = CreateFileW(candidate, GENERIC_WRITE | DELETE, 0, attributes, CREATE_NEW,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     BOOL success = FALSE;
@@ -361,7 +369,7 @@ int wmain(int argc, WCHAR **argv)
     }
     if (!walk(path, create, &sids, &attributes, ancestors, &opened)) goto done;
     if (write) {
-        if (!replace_file(argv[3], argv[4], ancestors[opened - 1], &attributes)) goto done;
+        if (!replace_file(argv[3], argv[4], &attributes)) goto done;
         const char message[] = "SEC_HUB_WRITE_OK\n";
         DWORD sent;
         success = WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), message, sizeof(message) - 1, &sent, NULL) &&

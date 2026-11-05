@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
 import test from 'node:test';
+import { setTimeout as pause } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { writeReports } from '../src/reports.mjs';
 import { runScan } from '../src/runner.mjs';
@@ -15,6 +16,7 @@ const native = { skip: process.platform !== 'win32' };
 const windowsDirectory = process.env.SystemRoot ?? 'C:\\Windows';
 const shell = join(windowsDirectory, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 const windowsInstaller = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
+
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'sec-hub-windows-io-')));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
@@ -120,7 +122,8 @@ test('Windows native: untrusted ACL, junction and unsafe file names fail before 
 
 test('Windows native: atomic replacement preserves hard-link targets and rolls back stream failure', native, async t => {
   const root = await fixture(t);
-  const output = join(root, 'output');
+  const stage = join(root, 'stage');
+  const output = join(stage, 'output');
   await ensureSafeDirectory(output);
   const victim = join(root, 'victim.txt');
   const report = join(output, 'report.txt');
@@ -132,5 +135,29 @@ test('Windows native: atomic replacement preserves hard-link targets and rolls b
   async function* broken() { yield 'partial'; throw new Error('broken stream'); }
   await assert.rejects(atomicWriteFile(report, broken()), /broken stream/);
   assert.deepEqual(await readFile(report), Buffer.from([0, 13, 10, 255]));
+
+  const gate = Promise.withResolvers();
+  async function* pausedWrite() { yield 'private '; await gate.promise; yield 'payload'; }
+  const writing = atomicWriteFile(report, pausedWrite());
+  writing.catch(() => {}); // Keep cleanup responsible for settling the writer.
+  try {
+    const deadline = Date.now() + 5000;
+    while (!(await readdir(output)).some(name => /^\.sec-hub-.*\.tmp$/.test(name))) {
+      assert.ok(Date.now() < deadline, 'native helper reached its write phase');
+      await pause(10);
+    }
+    await assert.rejects(rename(stage, join(root, 'moved-stage')), { code: /^(?:EACCES|EBUSY|EPERM)$/ });
+  } finally {
+    gate.resolve();
+    await writing;
+  }
+  assert.equal(await readFile(report, 'utf8'), 'private payload');
+
+  const candidates = ['first concurrent payload', 'second concurrent payload'];
+  const writes = await Promise.allSettled(candidates.map(value => atomicWriteFile(report, value)));
+  const committed = candidates.filter((_, index) => writes[index].status === 'fulfilled');
+  assert.ok(committed.includes(await readFile(report, 'utf8')), 'published bytes match a complete successful writer');
+  await atomicWriteFile(report, 'retry');
+  assert.equal(await readFile(report, 'utf8'), 'retry');
   assert.deepEqual(await readdir(output), ['report.txt']);
 });

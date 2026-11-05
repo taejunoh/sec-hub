@@ -84,7 +84,8 @@ jobs:
           node-version: ${{ matrix.node }}
           architecture: x64
           package-manager-cache: false
-      - name: Build the native Windows safe I/O helper
+      - name: Build the native Windows safe I/O helper and directory probe
+        id: windows-native-build
         shell: cmd
         env:
           CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
@@ -98,15 +99,37 @@ jobs:
           mkdir "%CI_ARTIFACT_DIR%" || exit /b 1
           if exist "src\native\windows-safe-io.exe" del /f /q "src\native\windows-safe-io.exe"
           if exist "src\native\windows-safe-io.exe" exit /b 1
-          cl.exe /nologo /std:c17 /MT /W4 /WX /O2 /DUNICODE /D_UNICODE /Fo"%RUNNER_TEMP%\windows-safe-io.obj" /Fe"src\native\windows-safe-io.exe" "src\native\windows-safe-io.c" advapi32.lib > "%CI_ARTIFACT_DIR%\windows-helper-build.log" 2>&1
+          set "SEC_HUB_CL_FLAGS=/nologo /std:c17 /MT /W4 /WX /O2 /DUNICODE /D_UNICODE"
+          cl.exe %SEC_HUB_CL_FLAGS% /Fo"%RUNNER_TEMP%\windows-safe-io.obj" /Fe"src\native\windows-safe-io.exe" "src\native\windows-safe-io.c" advapi32.lib > "%CI_ARTIFACT_DIR%\windows-helper-build.log" 2>&1
           set "SEC_HUB_BUILD_STATUS=%ERRORLEVEL%"
           type "%CI_ARTIFACT_DIR%\windows-helper-build.log"
           if not "%SEC_HUB_BUILD_STATUS%"=="0" exit /b %SEC_HUB_BUILD_STATUS%
           if not exist "src\native\windows-safe-io.exe" exit /b 1
+          cl.exe %SEC_HUB_CL_FLAGS% /Fo"%RUNNER_TEMP%\windows-directory-pin.obj" /Fe"%RUNNER_TEMP%\windows-directory-pin.exe" "test\windows-directory-pin.c" advapi32.lib > "%CI_ARTIFACT_DIR%\windows-directory-pin-build.log" 2>&1
+          set "SEC_HUB_BUILD_STATUS=%ERRORLEVEL%"
+          type "%CI_ARTIFACT_DIR%\windows-directory-pin-build.log"
+          if not "%SEC_HUB_BUILD_STATUS%"=="0" exit /b %SEC_HUB_BUILD_STATUS%
+          if not exist "%RUNNER_TEMP%\windows-directory-pin.exe" exit /b 1
       - name: Portable units, native process trees and Windows safe I/O
         env:
           CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
         run: node scripts/ci.mjs windows
+      - name: Verify that an open native handle pins an empty directory
+        if: ${{ !cancelled() && steps.windows-native-build.outcome == 'success' }}
+        shell: pwsh
+        env:
+          CI_ARTIFACT_DIR: ${{ runner.temp }}/sec-hub-ci-evidence
+        run: |
+          $fixture = [System.IO.Directory]::CreateTempSubdirectory('sec-hub directory pin-')
+          try {
+            $probe = Join-Path $env:RUNNER_TEMP 'windows-directory-pin.exe'
+            $directory = Join-Path $fixture.FullName 'empty'
+            $log = Join-Path $env:CI_ARTIFACT_DIR 'windows-directory-pin.log'
+            & $probe $directory 2>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-Item -LiteralPath $fixture.FullName -Recurse -Force
+          }
       - name: Preserve portable-scope and native Windows evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
