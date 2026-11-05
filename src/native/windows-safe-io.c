@@ -63,16 +63,40 @@ static BOOL trusted_sid(PSID sid, const trusted_sids *sids)
         EqualSid(sid, (PSID)sids->admins.bytes);
 }
 
-static BOOL trusted_dacl(HANDLE handle, const trusted_sids *sids, BOOL intermediate)
+static const char *principal_kind(PSID sid)
+{
+    if (IsWellKnownSid(sid, WinWorldSid)) return "Everyone (S-1-1-0)";
+    if (IsWellKnownSid(sid, WinAuthenticatedUserSid)) return "Authenticated Users (S-1-5-11)";
+    if (IsWellKnownSid(sid, WinBuiltinUsersSid)) return "Builtin Users (S-1-5-32-545)";
+    if (IsWellKnownSid(sid, WinCreatorOwnerSid)) return "Creator Owner (S-1-3-0)";
+    if (IsWellKnownSid(sid, WinCreatorGroupSid)) return "Creator Group (S-1-3-1)";
+    return "other Windows principal";
+}
+
+static BOOL trusted_dacl(HANDLE handle, const WCHAR *path, const trusted_sids *sids, BOOL intermediate)
 {
     PSID owner = NULL;
     PACL dacl = NULL;
     PSECURITY_DESCRIPTOR descriptor = NULL;
     DWORD result = GetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION |
         DACL_SECURITY_INFORMATION, &owner, NULL, &dacl, NULL, &descriptor);
-    BOOL trusted = FALSE;
-    if (result != ERROR_SUCCESS || !owner || !IsValidSid(owner) ||
-        !trusted_sid(owner, sids) || !dacl || !IsValidAcl(dacl)) goto done;
+    char problem[256] = "";
+    if (result != ERROR_SUCCESS) {
+        snprintf(problem, sizeof(problem), "could not query directory ACL (Win32 %lu)", (unsigned long)result);
+        goto done;
+    }
+    if (!owner || !IsValidSid(owner)) {
+        strcpy_s(problem, sizeof(problem), "directory ACL has no valid owner SID");
+        goto done;
+    }
+    if (!trusted_sid(owner, sids)) {
+        snprintf(problem, sizeof(problem), "untrusted directory ACL owner: %s", principal_kind(owner));
+        goto done;
+    }
+    if (!dacl || !IsValidAcl(dacl)) {
+        strcpy_s(problem, sizeof(problem), "missing or invalid directory DACL");
+        goto done;
+    }
 
     // Appending subdirectories at an intermediate directory is safe because
     // the next entry is independently checked before use. FILE_ADD_FILE is
@@ -82,29 +106,47 @@ static BOOL trusted_dacl(HANDLE handle, const trusted_sids *sids, BOOL intermedi
     GENERIC_MAPPING mapping = { FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_EXECUTE, FILE_ALL_ACCESS };
     for (DWORD index = 0; index < dacl->AceCount; ++index) {
         void *entry = NULL;
-        if (!GetAce(dacl, index, &entry)) goto done;
+        if (!GetAce(dacl, index, &entry)) {
+            snprintf(problem, sizeof(problem), "could not inspect directory ACL entry (Win32 %lu)", (unsigned long)GetLastError());
+            goto done;
+        }
         const ACE_HEADER *header = entry;
         // Intermediate children get their own check. The final directory
         // must not pass unsafe rights to later writes by the caller.
         if (intermediate && (header->AceFlags & INHERIT_ONLY_ACE)) continue;
         if (header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
-        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) goto done;
+        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) {
+            snprintf(problem, sizeof(problem), "unsupported directory ACL entry (type %u, flags 0x%02x)",
+                (unsigned int)header->AceType, (unsigned int)header->AceFlags);
+            goto done;
+        }
 
         const ACCESS_ALLOWED_ACE *ace = entry;
         PSID principal = (PSID)&ace->SidStart;
         const size_t sid_offset = offsetof(ACCESS_ALLOWED_ACE, SidStart);
         if (header->AceSize < sid_offset + offsetof(SID, SubAuthority) ||
             header->AceSize < sid_offset + GetSidLengthRequired(((SID *)principal)->SubAuthorityCount) ||
-            !IsValidSid(principal)) goto done;
+            !IsValidSid(principal)) {
+            strcpy_s(problem, sizeof(problem), "invalid directory ACL principal SID");
+            goto done;
+        }
         DWORD granted = ace->Mask;
         MapGenericMask(&granted, &mapping);
-        if ((granted & ~permitted) && !trusted_sid(principal, sids)) goto done;
+        DWORD forbidden = granted & ~permitted;
+        if (forbidden && !trusted_sid(principal, sids)) {
+            snprintf(problem, sizeof(problem), "untrusted directory ACL grant to %s (granted 0x%08lx, forbidden 0x%08lx, flags 0x%02x)",
+                principal_kind(principal), (unsigned long)granted, (unsigned long)forbidden, (unsigned int)header->AceFlags);
+            goto done;
+        }
     }
-    trusted = TRUE;
 
 done:
     if (descriptor) LocalFree(descriptor);
-    return trusted || reject("untrusted directory owner or ACL", result);
+    if (!problem[0]) return TRUE;
+    int converted = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path + 4, -1,
+        utf8, sizeof(utf8), NULL, NULL);
+    fprintf(stderr, "%s at \"%s\"\n", problem, converted ? utf8 : "(directory path unavailable)");
+    return FALSE;
 }
 
 static BOOL private_attributes(const trusted_sids *sids, BOOL directory, SECURITY_ATTRIBUTES *attributes)
@@ -204,7 +246,7 @@ static BOOL walk(const WCHAR *path, BOOL create, const trusted_sids *sids,
                    !valid_component(resolved + parent_prefix, (size_t)length - parent_prefix)) {
             return reject("directory resolved outside the checked ancestor", ERROR_ACCESS_DENIED);
         }
-        if (!trusted_dacl(handle, sids, *name != L'\0')) return FALSE;
+        if (!trusted_dacl(handle, resolved, sids, *name != L'\0')) return FALSE;
         memcpy(canonical, resolved, ((size_t)length + 1) * sizeof(WCHAR));
 
         if (!*name) return TRUE;
