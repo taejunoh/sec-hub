@@ -6,6 +6,8 @@ import { inspectTerminalOutcome } from './native-errors.mjs';
 import { validateAgentOptions } from '../config.mjs';
 import {replaySandboxInvocationPolicy,validateSandboxProbe} from './codex-sandbox.mjs';
 import { codexArgs,claudeArgs,cloudflarePrompt } from './invocation.mjs';
+import {NATIVE_TRACE_POLICY_VERSION,NATIVE_TRACE_FILE,inspectRuntimeTrace,readSealedNativeTrace} from './native-trace.mjs';
+import {validateNativeRoleConfiguration} from './native-roles.mjs';
 import { atomicWriteFile } from '../safe-io.mjs';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -136,6 +138,14 @@ export function inspectNativeEvents(id,events,options={}){
     const completed=events.filter(e=>e.type==='item.completed').map(e=>e.item).filter(Boolean);
     const instructionRead=completed.some(i=>i.type==='command_execution'&&i.status==='completed'&&i.exit_code===0&&pinnedInstructionRead(i.command,options));
     if(options.skillRoot&&!instructionRead)reasons.push('Missing native pinned security-audit instruction read');
+    if(Object.hasOwn(options,'traceEvidence')){
+      const native=inspectRuntimeTrace(options.traceEvidence,events,options);
+      reasons.push(...native.reasons);
+      if(!events.some(e=>e.type==='turn.completed')||events.some(e=>['turn.failed','error'].includes(e.type)))reasons.push('Native Codex turn did not succeed');
+      const result={...native,complete:!reasons.length,reasons,terminalReason,terminalOutcome,instructionRead};
+      Object.defineProperty(result,'verifierMessages',{value:native.verifierMessages,enumerable:false});
+      return result;
+    }
     const spawns=completed.filter(i=>i.type==='collab_tool_call'&&i.tool==='spawn_agent'&&i.status==='completed');
     const roleNames=['recon-architecture','recon-boundaries','recon-execution','recon-companions','hunter','critic-final','verifier'];
     const roles={};for(const role of roleNames)roles[role]=spawns.filter(i=>new RegExp(`SEC_HUB_ROLE=${role}(?:[-\\s]|$)`).test(i.prompt??'')).flatMap(i=>i.receiver_thread_ids??[]);
@@ -178,18 +188,36 @@ export function inspectNativeEvents(id,events,options={}){
 function canonical(value){if(Array.isArray(value))return value.map(canonical);if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])]));return value;}
 export function verifyCloudflareRecords(records,events,native){
   if(!Array.isArray(records))throw new Error('Cloudflare native findings must be an array');
-  const completed=events.filter(e=>e.type==='item.completed'&&e.item?.type==='collab_tool_call').flatMap(e=>Object.entries(e.item.agents_states??{}).filter(([,s])=>s.status==='completed').map(([thread,state])=>({thread,message:state.message})));
-  const verifiers=(native.verifierThreadIds??[]).map(thread=>{const message=completed.filter(x=>x.thread===thread).at(-1)?.message;let response;try{response=JSON.parse(message);}catch{return {thread,invalid:true};}return {thread,response};});
+  const completed=['codex-runtime-trace-v1','codex-runtime-trace-v2','codex-runtime-trace-v3'].includes(native.evidenceSource)?native.verifierMessages??[]:events.filter(e=>e.type==='item.completed'&&e.item?.type==='collab_tool_call').flatMap(e=>Object.entries(e.item.agents_states??{}).filter(([,s])=>s.status==='completed').map(([thread,state])=>({thread,message:state.message})));
+  const strict=native.evidenceSource==='codex-runtime-trace-v3';
+  const verifiers=(native.verifierThreadIds??[]).map(thread=>{
+    const delivery=completed.filter(x=>x.thread===thread).at(-1);let response;try{response=JSON.parse(delivery?.message);}catch{return {thread,invalid:true};}
+    const role=delivery?.role;
+    if(strict){
+      const keys=response&&typeof response==='object'&&!Array.isArray(response)?Object.keys(response).sort().join(','):'';
+      const final=role==='verifier-final'&&keys==='decision,scope'&&response.decision==='verified'&&response.scope==='final-empty-result';
+      const candidate=/^verifier-[1-9][0-9]*$/.test(role??'')&&keys==='decision,record'&&['needs_validation','rejected'].includes(response.decision)&&response.record&&typeof response.record==='object'&&!Array.isArray(response.record)&&response.record.verdict===response.decision;
+      if(!final&&!candidate)return {thread,role,invalid:true};
+    }
+    return {thread,role,response};
+  });
   const used=new Set(),proof=[];
   for(const record of records){
     const match=verifiers.find(v=>!used.has(v.thread)&&v.response?.record?.fingerprint===record.fingerprint&&v.response.decision===record.verdict&&JSON.stringify(canonical(v.response.record))===JSON.stringify(canonical(record)));
     if(!match)throw new Error(`Cloudflare final record lacks unchanged native independent verifier JSON: ${record.fingerprint}`);
     used.add(match.thread);proof.push({fingerprint:record.fingerprint,threadId:match.thread,decision:record.verdict});
   }
+  if(strict&&verifiers.some(v=>/^verifier-[1-9][0-9]*$/.test(v.role??'')&&v.response&&!used.has(v.thread)))throw new Error('Cloudflare final records omit a valid native independent verifier decision');
+  if(strict&&records.length&&verifiers.some(v=>v.role==='verifier-final'&&v.response))throw new Error('Cloudflare final-empty verifier conflicts with nonempty final records');
   if(!records.length&&!verifiers.some(v=>v.response?.decision==='verified'&&v.response.scope==='final-empty-result'))throw new Error('Cloudflare empty output lacks native independent final verification');
   return proof;
 }
 const text=x=>typeof x==='string'&&x.trim().length>0;
+function runtimeTracePolicy(manifest){
+  if(!Object.hasOwn(manifest,'runtimeTracePolicyVersion')){if(manifest.preRedactionHashes?.[NATIVE_TRACE_FILE]||manifest.finalRetainedHashes?.[NATIVE_TRACE_FILE])throw new Error('Missing native runtime trace policy version');return false;}
+  if(![1,2,3].includes(manifest.runtimeTracePolicyVersion)||replaySandboxInvocationPolicy(manifest)!==2)throw new Error('Unsupported native runtime trace policy version');
+  if(manifest.runtimeTracePolicyVersion!==3&&Object.hasOwn(manifest,'roleConfiguration'))throw new Error('Native role configuration policy mismatch');return true;
+}
 export function parseAnthropicDocument(doc,{copyTarget,inputs,artifactDir}){
   if(!doc||typeof doc!=='object'||Array.isArray(doc)||resolve(doc.target??'')!==resolve(copyTarget)||!text(doc.scanned_at)||!Number.isFinite(Date.parse(doc.scanned_at))||!Array.isArray(doc.focus_areas)||!doc.focus_areas.length||doc.focus_areas.some(x=>!text(x))||!Array.isArray(doc.findings)||doc.findings.length>1000||!doc.summary)throw new Error('Anthropic unsupported native document');
   const ids=new Set(),counts={total:doc.findings.length,high:0,medium:0,low:0,low_confidence:0};
@@ -266,7 +294,7 @@ export async function finalizeNativeExecution(id,ctx){
   const manifestFile=join(ctx.artifactDir,'execution-manifest.json');
   const bytes=await safeRead(manifestFile);if(sha256(bytes)!==expected)throw new Error('Trusted native manifest changed during redaction');
   const manifest=JSON.parse(bytes.toString()),hashes={};
-  for(const name of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log',...(id==='anthropic'&&anthropicPolicyVersion(manifest)>=2?registrationFiles:[])])hashes[name]=sha256(await safeRead(join(ctx.artifactDir,name)));
+  for(const name of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log',...(id==='cloudflare'&&runtimeTracePolicy(manifest)?[NATIVE_TRACE_FILE]:[]),...(id==='anthropic'&&anthropicPolicyVersion(manifest)>=2?registrationFiles:[])])hashes[name]=sha256(await safeRead(join(ctx.artifactDir,name)));
   manifest.finalRetainedHashes=hashes;manifest.finalHashScope='retained bytes after redaction';
   await atomicWriteFile(manifestFile,`${JSON.stringify(manifest,null,2)}\n`);prevalidated.delete(key);
   return validateNativeExecution(id,ctx);
@@ -279,19 +307,22 @@ export async function validateNativeExecution(id,ctx){
   const manifest=JSON.parse(manifestBytes.toString());
   if(manifest.schema!=='sec-hub.native-agent/v1'||manifest.id!==id||manifest.sourceCommit!==PINS[id]||manifest.source!==SOURCES[id]||resolve(manifest.target??'')!==resolve(ctx.target)||!Array.isArray(manifest.inputs)||!manifest.inputs.length)throw new Error(`${id}: invalid trusted execution manifest`);
   if(id==='cloudflare'&&(manifest.strategy??'native-collab')!==options.strategy)throw new Error('cloudflare: native execution strategy differs');
+  const traced=id==='cloudflare'&&runtimeTracePolicy(manifest);
+  if(traced&&manifest.runtimeTracePolicyVersion===3)await validateNativeRoleConfiguration(manifest.roleConfiguration,{copyTarget:manifest.copyTarget,skillRoot:options.skillRoot},{readFiles:false});
   if(manifest.model!==options.model||manifest.backend!==(id==='cloudflare'?'codex':'claude')||manifest.mode!==(id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan')||!text(manifest.backendVersion)||manifest.invocation?.command!==ctx.config.tools[id].command||!Array.isArray(manifest.invocation.args)||!sameInputs(manifest.invocation.args.slice(0,(ctx.config.tools[id].args??[]).length),ctx.config.tools[id].args??[]))throw new Error(`${id}: native backend configuration differs`);
   if(!text(manifest.nativeNodeExecutable)||!isAbsolute(manifest.nativeNodeExecutable)||/[\x00-\x1f\x7f]/.test(manifest.nativeNodeExecutable)||!/^\d+\.\d+\.\d+/.test(manifest.nativeNodeVersion??'')||Number.parseInt(manifest.nativeNodeVersion)<22)throw new Error(`${id}: missing or invalid native Node runtime evidence`);
   const policy=id==='anthropic'?anthropicPolicyVersion(manifest):undefined,registered=[2,3].includes(policy);
-  const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable,replaySandboxInvocationPolicy(manifest)):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs,policy);
-  if(manifest.invocation.cwd!==(id==='cloudflare'?runner:options.skillRoot)||!sameInputs(manifest.invocation.args,[...(ctx.config.tools[id].args??[]),...expectedArgs])||(id==='cloudflare'&&manifest.promptSha256!==sha256(cloudflarePrompt(manifest.copyTarget,join(runner,'audit'),options))))throw new Error(`${id}: native invocation does not match trusted policy`);
-  if(id==='cloudflare'&&replaySandboxInvocationPolicy(manifest)===2)validateSandboxProbe(manifest.sandboxProbe,true,manifest.backendVersion);
+  const runner=resolve(manifest.copyTarget,'../runner'),expectedArgs=id==='cloudflare'?codexArgs(runner,options,manifest.nativeNodeExecutable,replaySandboxInvocationPolicy(manifest),traced?manifest.runtimeTracePolicyVersion:undefined,manifest.roleConfiguration?.root):claudeArgs(manifest.copyTarget,options,{artifactDir:ctx.artifactDir},manifest.inputs,policy);
+  if(manifest.invocation.cwd!==(id==='cloudflare'?runner:options.skillRoot)||!sameInputs(manifest.invocation.args,[...(ctx.config.tools[id].args??[]),...expectedArgs])||(id==='cloudflare'&&manifest.promptSha256!==sha256(cloudflarePrompt(manifest.copyTarget,join(runner,'audit'),options,traced?manifest.runtimeTracePolicyVersion:undefined))))throw new Error(`${id}: native invocation does not match trusted policy`);
+  if(id==='cloudflare'&&replaySandboxInvocationPolicy(manifest)===2)validateSandboxProbe(manifest.sandboxProbe,true,manifest.backendVersion,traced,manifest.runtimeTracePolicyVersion===3);
   const instructions=await verifySourcePin(id,options,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true});if(!sameInputs(instructions,manifest.instructions))throw new Error(`${id}: official instruction hashes differ`);
   if(id==='anthropic'&&registered)await validateAnthropicRegistration(manifest.skillRegistration,manifest.copyTarget,options.skillRoot,instructions,ctx.artifactDir);
   const current=await sourceManifest(ctx.target);if(!sameInputs(current,manifest.inputs)||!sameInputs(manifest.inputs,manifest.copyBefore)||!sameInputs(manifest.inputs,manifest.copyAfter)||!sameInputs(manifest.inputs,manifest.originalAfter))throw new Error(`${id}: source preservation failed`);
   const events=(await safeRead(join(ctx.artifactDir,'native-events.jsonl'))).toString().split('\n').filter(x=>x.trim()).map(x=>JSON.parse(x));
-  const native=inspectNativeEvents(id,events,{...options,copyTarget:manifest.copyTarget,exitCode:manifest.process?.exitCode,...(id==='anthropic'?{invocationPolicyVersion:policy,registrationValidated:registered}:{})});const retainedHashes={};
+  const traceEvidence=traced?await readSealedNativeTrace(ctx.artifactDir,manifest):undefined;
+  const native=inspectNativeEvents(id,events,{...options,copyTarget:manifest.copyTarget,exitCode:manifest.process?.exitCode,...(traced?{traceEvidence,runtimeTracePolicyVersion:manifest.runtimeTracePolicyVersion}:{}),...(id==='anthropic'?{invocationPolicyVersion:policy,registrationValidated:registered}:{})});const retainedHashes={};
   const missing=[];
-  for(const file of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log',...(id==='anthropic'&&registered?registrationFiles:[])]){try{const data=await safeRead(join(ctx.artifactDir,file));retainedHashes[file]=sha256(data);}catch{missing.push(file);}}
+  for(const file of [...OUTPUTS[id],'native-events.jsonl','native-stderr.log',...(traced?[NATIVE_TRACE_FILE]:[]),...(id==='anthropic'&&registered?registrationFiles:[])]){try{const data=await safeRead(join(ctx.artifactDir,file));retainedHashes[file]=sha256(data);}catch{missing.push(file);}}
   if(missing.length){
     const error=new Error(`${id}: native workflow incomplete: ${native.terminalReason??native.reasons[0]??'Native output is missing or unsafe'}; missing or unsafe outputs: ${missing.join(', ')}`);
     error.findings=[];
@@ -309,5 +340,6 @@ export async function validateNativeExecution(id,ctx){
   if(ctx.exitCode!==0||manifest.process?.exitCode!==0||manifest.process?.interrupted||manifest.process?.outputLimitExceeded)reasons.push('Native process did not exit successfully');
   if(manifest.status!=='complete')reasons.push('Wrapper marked execution incomplete',...(Array.isArray(manifest.reasons)?manifest.reasons:[]));
   const execution={mode:id==='cloudflare'?'official-security-audit-skill':'official-claude-code-vuln-scan',backend:id==='cloudflare'?'codex':'claude',...(id==='cloudflare'?{strategy:options.strategy}:{}),sourceCommit:PINS[id],source:SOURCES[id],model:manifest.model,backendVersion:manifest.backendVersion,manifestPath:join(ctx.artifactDir,'execution-manifest.json'),dynamicVerification:'not-performed',limitations:id==='cloudflare'?['Source-only; target execution was not authorized.','Quick profile is partial coverage.']:['Static source candidates only; C/C++ Docker/gVisor/ASAN pipeline was not executed.'],nativeEvidence:native,validators,retainedHashes,hashScope:'retained bytes after redaction',sourcePreserved:true};
+  if(id==='cloudflare'&&manifest.runtimeTracePolicyVersion===3)execution.limitations.push('Encrypted parent task semantics are not inspected.','Independent child verification covers supplied source/report context; final report and ledger file bytes were not separately attested.');
   if(reasons.length){const error=new Error(`${id}: native workflow incomplete: ${[...new Set(reasons)].join('; ')}`);error.findings=findings;error.execution=execution;throw error;}if(!manifest.finalRetainedHashes)prevalidated.set(resolve(ctx.artifactDir),sha256(manifestBytes));return {findings,execution};
 }

@@ -38,3 +38,15 @@ test('permission patterns, config injection, profile names and unsupported hosts
  assert.throws(()=>validateSandboxProbe(undefined,true,'codex-cli 0.164.0'));
  assert.throws(()=>validateSandboxProbe({platform:'darwin'},true,'codex-cli 0.164.0'),/preflight/);
 });
+test('trace evidence requires an explicit sandbox trace isolation receipt while legacy receipts replay exactly',()=>{
+ const legacy={schema:'sec-hub.codex-sandbox-probe/v1',policyVersion:2,profile:'sec_hub_v2',platform:'darwin',checks:['target-read','pinned-document-read','runtime-exec','outside-read-denied','symlink-read-denied','target-write-denied','runner-write']};
+ const trace={...legacy,checks:[...legacy.checks,'trace-read-denied','trace-create-denied','trace-modify-denied','trace-delete-denied']};
+ assert.doesNotThrow(()=>validateSandboxProbe(legacy,true,'codex-cli 0.164.0'));
+ assert.doesNotThrow(()=>validateSandboxProbe(trace,true,'codex-cli 0.164.0',true));
+ assert.throws(()=>validateSandboxProbe(legacy,true,'codex-cli 0.164.0',true),/preflight/);
+ assert.throws(()=>validateSandboxProbe(trace,true,'codex-cli 0.164.0'),/preflight/);
+ for(const missing of trace.checks.filter(s=>s.startsWith('trace-')))assert.throws(()=>validateSandboxProbe({...trace,checks:trace.checks.filter(s=>s!==missing)},true,'codex-cli 0.164.0',true),/preflight/);
+ const role={...trace,checks:[...trace.checks,'role-config-read-denied','role-config-create-denied','role-config-modify-denied','role-config-delete-denied']};
+ assert.doesNotThrow(()=>validateSandboxProbe(role,true,'codex-cli 0.164.0',true,true));assert.throws(()=>validateSandboxProbe(trace,true,'codex-cli 0.164.0',true,true),/preflight/);
+ for(const missing of role.checks.filter(s=>s.startsWith('role-config-')))assert.throws(()=>validateSandboxProbe({...role,checks:role.checks.filter(s=>s!==missing)},true,'codex-cli 0.164.0',true,true),/preflight/);
+});

@@ -2,7 +2,7 @@
 
 Run local scans on a project and review results in your browser.
 
-[CLI 0.3.1 package](releases/sec-hub-local-0.3.1.tgz) · [Seven-tool validation](verification/seven-tools-validation-2026-10-29/REPORT.md) · [0.3.1 hosted CI](https://github.com/taejunoh/sec-hub/actions/runs/40961337281)
+[CLI 0.3.2 package](releases/sec-hub-local-0.3.2.tgz) · [Seven-tool validation](verification/seven-tools-validation-2026-10-29/REPORT.md) · [0.3.1 hosted CI](https://github.com/taejunoh/sec-hub/actions/runs/40961337281)
 
 ## Choose a path
 

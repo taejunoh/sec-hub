@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -48,12 +48,15 @@ async function cancellationFixture(t,phase){
     export function parseAnthropicDocument(){return []};
   `;
   const sandbox=`export const SANDBOX_INVOCATION_POLICY_VERSION=2;export function assertSandboxBackend(){}export async function probeSandbox(){return {schema:'sec-hub.codex-sandbox-probe/v1',policyVersion:2,profile:'sec_hub_v2',platform:'darwin',checks:['target-read','pinned-document-read','runtime-exec','outside-read-denied','symlink-read-denied','target-write-denied','runner-write']}}`;
-  await writeFile(loader,`const validation=${JSON.stringify(validation)},sandbox=${JSON.stringify(sandbox)};export async function resolve(specifier,context,next){if(context.parentURL?.endsWith('/native-wrapper.mjs')){if(specifier==='./validation.mjs')return {url:'fixture:validation',shortCircuit:true};if(specifier==='./codex-sandbox.mjs')return {url:'fixture:codex-sandbox',shortCircuit:true}}return next(specifier,context)}export async function load(url,context,next){if(url==='fixture:validation')return {format:'module',source:validation,shortCircuit:true};if(url==='fixture:codex-sandbox')return {format:'module',source:sandbox,shortCircuit:true};return next(url,context)}`);
+  // Lifecycle-only transport mock; native-trace.test.mjs validates the real
+  // evidence collector. This fixture deliberately supplies no model evidence.
+  const trace=`export const NATIVE_TRACE_POLICY_VERSION=1,NATIVE_TRACE_FILE='native-trace.json';export async function readNativeTrace(){return {fixture:true}};export function monitorNativeTrace(){return {noteRootStarted(){},async stop(){}}}`;
+  await writeFile(loader,`const validation=${JSON.stringify(validation)},sandbox=${JSON.stringify(sandbox)},trace=${JSON.stringify(trace)};export async function resolve(specifier,context,next){if(context.parentURL?.endsWith('/native-wrapper.mjs')){if(specifier==='./validation.mjs')return {url:'fixture:validation',shortCircuit:true};if(specifier==='./codex-sandbox.mjs')return {url:'fixture:codex-sandbox',shortCircuit:true};if(specifier==='./native-trace.mjs')return {url:'fixture:native-trace',shortCircuit:true}}return next(specifier,context)}export async function load(url,context,next){if(url==='fixture:validation')return {format:'module',source:validation,shortCircuit:true};if(url==='fixture:codex-sandbox')return {format:'module',source:sandbox,shortCircuit:true};if(url==='fixture:native-trace')return {format:'module',source:trace,shortCircuit:true};return next(url,context)}`);
   const options={id:'cloudflare',command:process.execPath,args:[fake],target:join(root,'target'),artifactDir:join(root,'artifacts'),agentOptions:{skillRoot:join(root,'skill'),workRoot:join(root,'work'),revision:'c1c8a8c1471069fb0e188eeaff69b8e8db6564a8',model:'fixture'}};
   const preload=join(root,'cancel-late.mjs');
-  await writeFile(preload,`import fs from 'node:fs/promises';import {syncBuiltinESMExports} from 'node:module';let sent=false;const original=fs[process.env.PHASE==='publication'?'rename':'rm'];if(['publication','cleanup'].includes(process.env.PHASE)){const method=process.env.PHASE==='publication'?'rename':'rm';fs[method]=async(...args)=>{const result=await original(...args);if(!sent&&(method==='rename'&&args[1].endsWith('/execution-manifest.json')||method==='rm'&&args[0].startsWith(process.env.ROOT+'/work/'))){sent=true;process.emit('SIGTERM');}return result;};syncBuiltinESMExports();}`);
+  await writeFile(preload,`import fs from 'node:fs/promises';import {syncBuiltinESMExports} from 'node:module';let sent=false;const original=fs[process.env.PHASE==='publication'?'rename':'rm'];if(['publication','cleanup','stage-cleanup-failure'].includes(process.env.PHASE)){const method=process.env.PHASE==='publication'?'rename':'rm';fs[method]=async(...args)=>{if(process.env.PHASE==='stage-cleanup-failure'&&args[0].startsWith(process.env.ROOT+'/work/sec-hub-cloudflare-'))throw new Error('injected stage cleanup failure');const result=await original(...args);if(process.env.PHASE!=='stage-cleanup-failure'&&!sent&&(method==='rename'&&args[1].endsWith('/execution-manifest.json')||method==='rm'&&args[0].startsWith(process.env.ROOT+'/work/'))){sent=true;process.emit('SIGTERM');}return result;};syncBuiltinESMExports();}`);
   const result=await child(['--import',preload,'--experimental-loader',loader,wrapper,JSON.stringify(options)],{ROOT:root,PHASE:phase});
-  return {...result,manifest:await readFile(join(root,'artifacts/execution-manifest.json'),'utf8').then(JSON.parse).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;}),calls:await readFile(join(root,'calls'),'utf8')};
+  return {root,...result,manifest:await readFile(join(root,'artifacts/execution-manifest.json'),'utf8').then(JSON.parse).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;}),calls:await readFile(join(root,'calls'),'utf8')};
 }
 for(const phase of ['copy','validators','final','final-pin','publication','cleanup'])test(`release022 #7 SIGTERM during ${phase} keeps native manifest incomplete and avoids later children`,async t=>{
   const result=await cancellationFixture(t,phase);assert.equal(result.code,143,result.stderr);assert.equal(result.manifest.status,'incomplete');assert.match(result.manifest.reasons.join(';'),/interrupt|cancel/i);
@@ -62,5 +65,9 @@ for(const phase of ['copy','validators','final','final-pin','publication','clean
   if(phase==='final-pin')assert.equal(result.calls,'pin\nvalidators\npin\n');
 });
 test('release022 #7 uncancelled native entry still publishes complete with validators and final checks',async t=>{const result=await cancellationFixture(t,'healthy');assert.equal(result.code,0,result.stderr);assert.equal(result.manifest.status,'complete');assert.equal(result.calls,'pin\nvalidators\npin\n');});
+test('private raw trace cleanup succeeds independently when source-stage cleanup fails',async t=>{
+ const result=await cancellationFixture(t,'stage-cleanup-failure');assert.equal(result.code,2);assert.equal(result.manifest.status,'incomplete');assert.match(result.manifest.reasons.join(';'),/staging cleanup failed/);
+ const remaining=await readdir(join(result.root,'work'));assert.ok(remaining.some(name=>name.startsWith('sec-hub-cloudflare-')));assert.equal(remaining.some(name=>name.startsWith('sec-hub-trace-')),false);assert.equal(remaining.some(name=>name.startsWith('sec-hub-roles-')),false);
+});
 
 test('release022 #7 initial pin cancellation aborts before any later Git child or native stage',async t=>{const result=await cancellationFixture(t,'initial-pin');assert.equal(result.code,143,result.stderr);assert.equal(result.calls,'pin\n');assert.equal(result.manifest,undefined);});
