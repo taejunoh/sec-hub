@@ -1,16 +1,25 @@
 # Sec Hub
 
-Sec Hub is a desktop app that checks a software project for known
-vulnerabilities in the packages it depends on. Choose a project folder, run a
-scan, and open a report that shows which packages were flagged and why.
+Sec Hub Desktop checks the software packages your project relies on for known
+security issues. Choose a project folder, run an OSV Scanner check, and see
+which packages need attention and why. OSV Scanner is the only scanner in this
+desktop release. The Sec Hub CLI can run additional security tools and combine
+their results in one report.
 
 ## Why it exists
 
 Security scanners often have their own setup, commands, and output formats.
-Sec Hub started as a command-line tool that brings those results together in a
-consistent report and shows which checks ran. The desktop app makes the most
-common first step, checking a project's dependencies, available without a
-terminal.
+The Sec Hub CLI brings results from multiple security tools together in a
+consistent report and shows which checks ran. The desktop app lets you run a
+dependency check without opening a terminal.
+
+## Example scan
+
+![Sec Hub Desktop showing four OSV findings and the selected lodash advisory](docs/images/desktop-osv-results.png)
+
+An actual OSV scan in the macOS desktop development build found four known
+vulnerabilities in the demo project's `lodash` 4.17.20 dependency. Select a
+finding to see its severity, the advisory ID, and where it was found.
 
 ## Download Sec Hub Desktop 0.2.0
 
@@ -32,29 +41,31 @@ and Windows ARM devices are outside its support range.
    On Windows, right-click the ZIP, choose **Extract All**, then open
    **Sec Hub.exe** from the extracted folder. Keep the Windows app files together.
 2. In **Project security scan**, click **Choose folder** and select the project
-   folder you want to check. If the app opens in Korean, select **English** at
-   the top of the window.
+   folder you want to check. For a first scan, choose the root folder of a
+   JavaScript project that contains `package-lock.json`. If the app opens in
+   Korean, select **English** at the top of the window.
 3. Keep **OSV Scanner** selected and click **Start scan**.
 4. When the scan finishes, click **Refresh results & open** to read the report.
    To open it later, choose **File → Show recent scans**.
+
+A completed scan with no findings means OSV Scanner found no known
+vulnerabilities in the dependencies it checked. If the scan fails, check the
+error message and try again after resolving it.
 
 [See the full setup and scan guide](docs/GETTING-STARTED.md).
 
 ## How it works
 
-The desktop app was built with Electron and uses Sec Hub's Node.js scanning
-and reporting code. It bundles Google's OSV Scanner, so you can run a scan
-without installing Node.js or creating an OSV account.
+**Choose a folder → Read the package list → Look up known vulnerabilities →
+Save the report**
 
-OSV Scanner reads supported dependency files, such as `package-lock.json`,
-and looks up known vulnerabilities. It needs an internet connection and may
-send package names and versions to OSV's advisory and package metadata
-services. If a completed scan reports no findings, it found no known
-vulnerabilities in the dependencies it checked. It cannot establish that the
-whole project is safe.
+Electron provides the desktop window. Sec Hub's Node.js code starts the
+bundled Google OSV Scanner and saves its results for the app to display. You
+can run a scan without installing Node.js or creating an OSV account.
 
-OSV Scanner is the only scanner this desktop release runs. Other tools,
-including AI scanners, may appear in the app for setup guidance.
+OSV Scanner needs internet access and may send package names and versions to
+its advisory and package metadata services. The results cover the supported
+dependency files that OSV checked.
 
 ## For developers
 
