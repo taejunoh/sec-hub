@@ -1,60 +1,57 @@
-# Getting started
+# Getting started with Sec Hub Desktop
 
-## Download the prerelease
+## 1. Download and open the app
 
-Open the [Sec Hub Desktop 0.2.0 private prerelease page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0)
-and sign in to GitHub with an account that has access to this private
-repository. Download the matching package:
+[Sec Hub Desktop 0.2.0](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0)
+is a private prerelease. Sign in to GitHub with an account that has access to
+the Sec Hub repository. If the link shows a 404, check that you're signed in
+with the right account or ask the repository owner for access.
 
-- **macOS Apple silicon, recommended:** [Developer ID signed and notarized ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip)
-- **macOS development variant:** [ad-hoc signed ZIP, not notarized](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-development.zip)
-- **Windows x64:** [prerelease ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip) (no Sec Hub publisher signature)
+- **Mac with Apple silicon (M-series):** [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip).
+  In Finder, double-click the downloaded ZIP. Then double-click **Sec Hub.app**
+  (Finder may display it as **Sec Hub**).
+- **Windows x64 (Intel or AMD):** [Download the Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip).
+  In File Explorer, right-click the ZIP, choose **Extract All**, then open
+  **Sec Hub.exe** in the extracted **Sec Hub** folder. Keep the extracted files
+  together. Windows may show an unknown publisher warning because this build
+  has no Sec Hub publisher signature. Keep your system protections enabled; if
+  your device blocks the app, check with your administrator.
 
-The [macOS notarized package checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-macos-notarized-SHA256SUMS.txt)
-are on the same release page.
+Intel Macs and Windows ARM devices are unsupported. If you're downloading from
+the release page, look under **Assets** for the ZIP linked above. The Mac
+development ZIP is not notarized, and the **Source code** archives do not
+contain the ready-to-run app.
 
-These packages support macOS on Apple silicon and Windows x64. Intel Macs and
-Windows ARM are not supported. Extract the ZIP before opening the app. On
-Windows, keep the extracted files together.
+The app includes OSV Scanner. You don't need to install Node.js, install OSV
+Scanner separately, or create an OSV account.
 
-The app includes its runtime and OSV Scanner. You do not need to install
-Node.js, OSV Scanner, or create an OSV account separately.
+To verify your download, use the release's [notarized Mac checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-macos-notarized-SHA256SUMS.txt)
+or [Windows checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-SHA256SUMS.txt).
 
-## Install and run a scan
+## 2. Scan a project folder
 
-1. Open `Sec Hub.app` on macOS or `Sec Hub.exe` on Windows.
-2. In **프로젝트 보안 검사** (*Project security scan*), choose **폴더 선택**
-   (*Choose folder*) and select the project folder you want to check.
-3. Confirm OSV Scanner is available and selected under **기본 검사** (*Default
-   scan*), then choose **검사 시작** (*Start scan*).
-4. When the scan finishes, choose **결과 반영 및 열기** (*Reflect results and
-   open*) to add the report to the results list. Choose **Show recent scans**
-   from the File menu to reopen reports saved by this app later.
+If the app opens in Korean, use the language menu at the top to switch to
+**English**.
 
-OSV checks supported dependency files for known vulnerabilities. It needs
-network access to query OSV's advisory and package-metadata services; package
-names and versions may be sent. A scan result describes the checks that ran,
-not a guarantee that the project is safe or vulnerability-free. A scan with
-findings is still a completed scan.
+1. In **Project security scan** (프로젝트 보안 검사), click **Choose folder**
+   (폴더 선택). Select the folder containing the project you want to check, such
+   as a JavaScript project with a `package-lock.json` file.
+2. Keep **OSV Scanner** selected under **Default scan** (기본 검사), then click
+   **Start scan** (검사 시작).
+3. When the scan finishes, click **Refresh results & open** (결과 반영 및 열기)
+   to see the saved report. To reopen it later, choose
+   **File → Show recent scans**.
 
-## Optional tools and sign-in
+## 3. Understand the results
 
-The app may list other scanners, including AI tools, but they are currently
-unavailable to run from this desktop build. Sec Hub does not confirm whether
-those tools are installed or whether a provider account is signed in; AI
-authentication is shown as **unknown**. The app's per-run confirmation for
-code transfer and possible provider charges does not mean that an account has
-been authenticated or that the provider call will succeed.
+OSV checks supported dependency files for known vulnerabilities. It needs an
+internet connection and may send package names and versions to OSV services.
+A completed scan can have findings, and an empty report doesn't prove the
+project is safe.
 
-## Signing and opening
+OSV is the only scanner this desktop release can run. Other scanners,
+including AI tools, may appear in the setup section. The app cannot run them
+or confirm whether they are installed or signed in to a provider.
 
-The recommended macOS ZIP is signed with an Apple Developer ID, notarized, and
-has its notarization ticket stapled. The packaged app passed independent
-Gatekeeper policy (`spctl`) and stapler checks. The separate macOS development
-ZIP remains ad-hoc signed, with no Apple developer certificate or
-notarization. Windows packages have no Sec Hub publisher signature, so Windows
-may show an unknown-publisher warning. Do not disable operating-system
-protections to open an app you do not trust.
-
-The older [desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
-can open saved results and its example, but it cannot perform scans.
+The [older desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
+can open saved reports but cannot scan projects.

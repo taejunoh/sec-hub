@@ -1,27 +1,39 @@
 # Sec Hub
 
-Sec Hub checks a project folder for known dependency vulnerabilities and opens
-the saved results in a desktop app.
+Sec Hub is a desktop app that checks a project folder for known vulnerabilities
+in its software dependencies and lets you review the results.
 
-## Getting started
+## Download Sec Hub Desktop 0.2.0
 
-Download the **desktop 0.2.0 private prerelease** from the
-[GitHub release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0).
-Sign in to GitHub with an account that has access to this private repository.
+This is a **private prerelease**. Sign in to GitHub with an account that has
+access to this repository, then download the ZIP for your computer:
 
-- macOS Apple silicon: [Developer ID signed and notarized ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip)
-- macOS development variant: [ad-hoc signed ZIP, not notarized](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-development.zip)
-- Windows x64: [prerelease ZIP; no Sec Hub publisher signature](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip)
+- **Mac with Apple silicon (M-series):** [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip)
+- **Windows x64 (Intel or AMD):** [Download the Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip). Windows may show an unknown publisher warning because this build has no Sec Hub publisher signature.
 
-The older [desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
-is a saved-results viewer; it does not scan projects. See
-[Getting started](docs/GETTING-STARTED.md) for install and scan instructions.
+Intel Macs and Windows ARM devices are unsupported. If you need to find the
+files manually, open the [release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0)
+and look under **Assets**.
 
-The desktop app includes OSV Scanner, so no separate Node.js or scanner install
-is needed. OSV may send package names and versions over the network to look up
-known vulnerabilities. Other listed tools are not currently available to run
-from this desktop build. Their installation or provider sign-in status cannot
-be confirmed by Sec Hub.
+## Run your first scan
+
+1. **Extract the ZIP.** On Mac, double-click the ZIP and open **Sec Hub.app**. On
+   Windows, right-click the ZIP, choose **Extract All**, then open **Sec Hub.exe**
+   from the extracted folder. Keep the Windows app files together.
+2. In **Project security scan**, click **Choose folder** and select the project
+   folder you want to check. If the app opens in Korean, select **English** at
+   the top of the window.
+3. Leave **OSV Scanner** selected and click **Start scan**.
+4. When the scan finishes, click **Refresh results & open** to read the report.
+
+[See the full setup and scan guide](docs/GETTING-STARTED.md), including how to
+reopen saved reports.
+
+OSV Scanner comes with the app. You don't need to install Node.js or create an
+OSV account. The scanner needs an internet connection and may send package
+names and versions to look up known vulnerabilities. OSV is the only
+scanner this desktop release can run. Other tools, including AI scanners, may
+be listed for setup guidance. An empty report does not mean the project is safe.
 
 ## Other project material
 
