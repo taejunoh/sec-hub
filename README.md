@@ -5,12 +5,14 @@ the saved results in a desktop app.
 
 ## Getting started
 
-The desktop scanner is being prepared for macOS Apple silicon and Windows x64.
-This repository state does not include a published download for that scanner.
+Download the **desktop 0.2.0 private prerelease** from the
+[GitHub release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0).
+Sign in to GitHub with an account that has access to this private repository.
+Choose `sec-hub-desktop-0.2.0-darwin-arm64-development.zip` for macOS Apple
+silicon or `sec-hub-desktop-0.2.0-win32-x64-prerelease.zip` for Windows x64.
 The older [desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
 is a saved-results viewer; it does not scan projects. See
-[Getting started](docs/GETTING-STARTED.md) for the current install, scan, and
-results instructions and the release status.
+[Getting started](docs/GETTING-STARTED.md) for install and scan instructions.
 
 The desktop app includes OSV Scanner, so no separate Node.js or scanner install
 is needed. OSV may send package names and versions over the network to look up

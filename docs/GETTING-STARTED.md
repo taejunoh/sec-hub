@@ -1,28 +1,29 @@
 # Getting started
 
-## Availability
+## Download the prerelease
 
-The scanning desktop app is being prepared for **macOS on Apple silicon** and
-**Windows x64**. There is no published download for this build in the current
-repository state. The [desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
-is an earlier viewer for saved results and examples; it cannot scan a project.
-Use a scanning ZIP only when one has been provided from a verified release.
+Open the [Sec Hub Desktop 0.2.0 private prerelease page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0)
+and sign in to GitHub with an account that has access to this private
+repository. Download the matching package:
+
+- **macOS Apple silicon:** `sec-hub-desktop-0.2.0-darwin-arm64-development.zip`
+- **Windows x64:** `sec-hub-desktop-0.2.0-win32-x64-prerelease.zip`
+
+These packages support macOS on Apple silicon and Windows x64. Intel Macs and
+Windows ARM are not supported. Extract the ZIP before opening the app. On
+Windows, keep the extracted files together.
 
 The app includes its runtime and OSV Scanner. You do not need to install
 Node.js, OSV Scanner, or create an OSV account separately.
 
 ## Install and run a scan
 
-1. When a scanning package is available to you, choose the ZIP matching your
-   computer: **macOS Apple silicon** or **Windows x64**. Intel Macs and Windows
-   ARM are not supported by these builds. Extract the ZIP. On Windows, keep
-   the extracted files together.
-2. Open `Sec Hub.app` on macOS or `Sec Hub.exe` on Windows.
-3. In **프로젝트 보안 검사** (*Project security scan*), choose **폴더 선택**
+1. Open `Sec Hub.app` on macOS or `Sec Hub.exe` on Windows.
+2. In **프로젝트 보안 검사** (*Project security scan*), choose **폴더 선택**
    (*Choose folder*) and select the project folder you want to check.
-4. Confirm OSV Scanner is available and selected under **기본 검사** (*Default
+3. Confirm OSV Scanner is available and selected under **기본 검사** (*Default
    scan*), then choose **검사 시작** (*Start scan*).
-5. When the scan finishes, choose **결과 반영 및 열기** (*Reflect results and
+4. When the scan finishes, choose **결과 반영 및 열기** (*Reflect results and
    open*) to add the report to the results list. Choose **Show recent scans**
    from the File menu to reopen reports saved by this app later.
 
@@ -49,5 +50,5 @@ signature. Your operating system may show a warning. These packages do not
 provide the publisher verification associated with signed, notarized releases.
 Do not disable operating-system protections to open an app you do not trust.
 
-If a package is unavailable, the older 0.1.0 release can still open existing
-saved results and its example, but it cannot perform scans.
+The older [desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
+can open saved results and its example, but it cannot perform scans.
