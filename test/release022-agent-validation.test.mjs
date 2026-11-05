@@ -6,7 +6,10 @@ import { tmpdir } from 'node:os';
 import { resolve,join } from 'node:path';
 import { inspectNativeEvents,validateNativeExecution,sourceManifest,verifySourcePin,sha256,PINS,SOURCES,OUTPUTS } from '../src/agents/validation.mjs';
 import { codexArgs,cloudflarePrompt } from '../src/agents/invocation.mjs';
-import { runSupervisedCloudflare } from '../src/agents/supervised-cloudflare.mjs';
+import { registerSupervisedMockSandboxBackend } from './helpers/supervised-mock-sandbox-backend.mjs';
+// The fake CLI exercises ledger validation, not a real host sandbox backend.
+registerSupervisedMockSandboxBackend();
+const { runSupervisedCloudflare } = await import('../src/agents/supervised-cloudflare.mjs');
 import { preparePlan,assignHunter,applyHunter } from '../src/agents/supervised-validation.mjs';
 import { loadCloudflareContracts } from '../src/agents/cloudflare-prompts.mjs';
 import { cloudflareSourceRoot } from './helpers/cloudflare-source.mjs';
