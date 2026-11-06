@@ -1,17 +1,42 @@
 # Sec Hub
 
-Sec Hub Desktop checks the software packages your project relies on for known
-security issues. Choose a project folder, run an OSV Scanner check, and see
-which packages need attention and why. OSV Scanner is the only scanner in this
-desktop release. The Sec Hub CLI can run additional security tools and combine
-their results in one report.
+**Run seven security tools and workflows through one CLI. Review their results
+in one report.** Sec Hub brings together dependency checks, AI skill scanning,
+code review, and URL checks. The report shows findings alongside which tools
+completed, were skipped, or failed. Results are available as HTML, JSON, and SARIF.
 
-## Why it exists
+**Desktop quick start:** The [Desktop 0.2.1 prerelease](#download-sec-hub-desktop-021)
+bundles Google OSV Scanner for dependency checks without a terminal. Use the
+CLI to select and configure all seven integrations.
 
-Security scanners often have their own setup, commands, and output formats.
-The Sec Hub CLI brings results from multiple security tools together in a
-consistent report and shows which checks ran. The desktop app lets you run a
-dependency check without opening a terminal.
+## Seven integrations
+
+| Upstream project | What Sec Hub runs |
+| --- | --- |
+| [Google OSV Scanner](https://github.com/google/osv-scanner) | Finds known vulnerabilities in project dependencies. |
+| [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) | Scans AI agent skills for suspicious patterns in static mode. |
+| [OpenAI Codex Security](https://github.com/openai/codex-security) | Reviews source code for potential vulnerabilities. |
+| [Alibaba Open Code Review](https://github.com/alibaba/open-code-review) | Reviews repository code for security and correctness issues. |
+| [OpenAI PHP2Shell Checker](https://github.com/openai/php2shell-checker) | Checks the specified URL's response headers for signs of affected PHP versions. |
+| [Cloudflare Security Audit Skill](https://github.com/cloudflare/security-audit-skill) | Runs the upstream audit workflow through the Codex CLI. |
+| [Anthropic Defending Code Reference Harness](https://github.com/anthropics/defending-code-reference-harness) | Runs the upstream Claude Code `/vuln-scan` skill in static mode. |
+
+Install the upstream tools and adapt the [seven-tool configuration](examples/seven-tools.config.json)
+to your environment. AI workflows require explicit `--ai` opt-in and may send
+code or context to the configured provider. The PHP check uses the URL you supply.
+SkillSpector requires a target with a top-level `SKILL.md`. With the tools
+configured, select all seven in one command:
+
+```sh
+node bin/sec-hub.mjs scan /path/to/project \
+  --tools osv,skillspector,codex-security,open-code-review,php2shell,cloudflare,anthropic \
+  --ai --config /path/to/sec-hub.config.json \
+  --url http://127.0.0.1:8080 --timeout 1200 --out ./sec-hub-runs
+```
+
+See the [CLI setup and technical reference](docs/REFERENCE.md) for tool
+requirements and execution limits. The [verification history](docs/HISTORY.md#031-source-and-seven-tool-validation)
+describes how results from the seven integrations were checked and combined.
 
 ## Example scan
 
@@ -42,7 +67,7 @@ results** restores the search, filters, scroll position, and keyboard focus.
 
 ## Download Sec Hub Desktop 0.2.1
 
-When the 0.2.1 prerelease assets are available, choose the ZIP for your computer.
+Choose the ZIP for your computer.
 
 | Your computer | Download |
 | --- | --- |
@@ -74,7 +99,7 @@ error message and try again after resolving it.
 
 [See the full setup and scan guide](docs/GETTING-STARTED.md).
 
-## How it works
+## How the desktop scan works
 
 **Choose a folder → Read the package list → Look up known vulnerabilities →
 Save the report**
@@ -89,7 +114,6 @@ dependency files that OSV checked.
 
 ## For developers
 
-- [CLI setup and technical reference](docs/REFERENCE.md)
 - [Sample report from a multi-tool CLI scan](docs/sample-report.html)
 - [Desktop build and packaging notes](desktop/README.md)
 - [Release and verification history](docs/HISTORY.md)
