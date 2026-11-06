@@ -2,15 +2,15 @@
 
 ## 1. Download and open the app
 
-[Sec Hub Desktop 0.2.0](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0)
+[Sec Hub Desktop 0.2.1](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1)
 is a private prerelease. Sign in to GitHub with an account that has access to
 the Sec Hub repository. If the link shows a 404, check that you're signed in
 with the right account or ask the repository owner for access.
 
-- **Mac with Apple silicon (M-series):** [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip).
+- **Mac with Apple silicon (M-series):** [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip).
   In Finder, double-click the downloaded ZIP. Then double-click **Sec Hub.app**
   (Finder may display it as **Sec Hub**).
-- **Windows x64 (Intel or AMD):** [Download the Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip).
+- **Windows x64 (Intel or AMD):** [Download the Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip).
   In File Explorer, right-click the ZIP, choose **Extract All**, then open
   **Sec Hub.exe** in the extracted **Sec Hub** folder. Keep the extracted files
   together. Windows may show an unknown publisher warning because this build
@@ -18,15 +18,13 @@ with the right account or ask the repository owner for access.
   your device blocks the app, check with your administrator.
 
 Intel Macs and Windows ARM devices are unsupported. If you're downloading from
-the release page, look under **Assets** for the ZIP linked above. The Mac
-development ZIP is not notarized, and the **Source code** archives do not
-contain the ready-to-run app.
+the release page, look under **Assets** for the ZIP linked above. The
+**Source code** archives do not contain the ready-to-run app.
 
 The app includes OSV Scanner. You don't need to install Node.js, install OSV
 Scanner separately, or create an OSV account.
 
-To verify your download, use the release's [notarized Mac checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-macos-notarized-SHA256SUMS.txt)
-or [Windows checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-SHA256SUMS.txt).
+To verify either download, use the release's [SHA-256 checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
 
 ## 2. Scan a project folder
 
@@ -39,7 +37,7 @@ If the app opens in Korean, use the language menu at the top to switch to
 2. Keep **OSV Scanner** selected under **Default scan** (기본 검사), then click
    **Start scan** (검사 시작).
 3. When the scan finishes, click **Refresh results & open** (결과 반영 및 열기)
-   to see the saved report. To reopen it later, choose
+   to see the saved report in the Security inbox. To reopen it later, choose
    **File → Show recent scans**.
 
 ## 3. Understand the results

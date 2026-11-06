@@ -18,8 +18,9 @@ dependency check without opening a terminal.
 ![Security inbox with findings on the left and the selected advisory on the right](docs/images/security-inbox-wide.png)
 
 The screenshots show the current Security inbox with results from an OSV scan
-in the macOS development build. The demo project's `lodash` 4.17.20 dependency
-had four findings, two high and two medium.
+in the macOS 0.2.0 development build. The demo project's `lodash` 4.17.20
+dependency had four findings, two high and two medium. The 0.2.1 prerelease
+packages include this inbox.
 
 The inbox puts the highest severity findings first. Search by package, title,
 or advisory ID, or filter by severity. Select a finding to read its impact,
@@ -39,19 +40,20 @@ results** restores the search, filters, scroll position, and keyboard focus.
 
 </details>
 
-## Download Sec Hub Desktop 0.2.0
+## Download Sec Hub Desktop 0.2.1
 
 This is a **private prerelease**. Sign in to GitHub with an account that has
 access to the Sec Hub repository.
 
 | Your computer | Download |
 | --- | --- |
-| Mac with Apple silicon (M-series) | [Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-darwin-arm64-notarized-prerelease.zip), signed and notarized |
-| Windows x64 (Intel or AMD) | [Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.0/sec-hub-desktop-0.2.0-win32-x64-prerelease.zip), without a Sec Hub publisher signature. Windows may show an unknown publisher warning. |
+| Mac with Apple silicon (M-series) | [Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip), signed and notarized |
+| Windows x64 (Intel or AMD) | [Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip), without a Sec Hub publisher signature. Windows may show an unknown publisher warning. |
 
 This release supports Apple silicon Macs and Windows x64 PCs. Intel Macs
 and Windows ARM devices are outside its support range.
-[Browse all release assets](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.0).
+[Browse all release assets](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1).
+Verify either ZIP with the [SHA-256 checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
 
 ## Run your first scan
 
@@ -63,7 +65,8 @@ and Windows ARM devices are outside its support range.
    JavaScript project that contains `package-lock.json`. If the app opens in
    Korean, select **English** at the top of the window.
 3. Keep **OSV Scanner** selected and click **Start scan**.
-4. When the scan finishes, click **Refresh results & open** to read the report.
+4. When the scan finishes, click **Refresh results & open** to read the report
+   in the **Security inbox**.
    To open it later, choose **File → Show recent scans**.
 
 A completed scan with no findings means OSV Scanner found no known
