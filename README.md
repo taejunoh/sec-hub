@@ -24,6 +24,10 @@ Follow the [desktop setup guide](desktop/README.md#run-a-multi-tool-scan).
 | [Cloudflare Security Audit Skill](https://github.com/cloudflare/security-audit-skill) | Runs the upstream audit workflow through the Codex CLI. |
 | [Anthropic Defending Code Reference Harness](https://github.com/anthropics/defending-code-reference-harness) | Runs the upstream Claude Code `/vuln-scan` skill in static mode. |
 
+Before installing or upgrading an integration, check the [verified CLI versions](src/adapters/SOURCES.md)
+and the [requirements for the Cloudflare and Anthropic workflows](docs/REFERENCE.md#official-security-skill-workflows).
+New upstream versions may change sign-in, command options, or report formats.
+
 Install the upstream tools and adapt the [seven-tool configuration](examples/seven-tools.config.json)
 to your environment. AI workflows require explicit `--ai` opt-in and may send
 code or context to the configured provider. The PHP check uses the URL you supply.
