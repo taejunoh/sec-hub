@@ -114,6 +114,7 @@ const nativeHarness = (overrides = {}) => {
     cancelScan: () => ({ job: { ...running, state: 'cancelling' } }),
     refreshResults: () => ({ generation: 1, catalog: { artifacts: [], snapshot: { createdAt: 'now' } }, results: [{ jobId: done.id, runId: 'run-one', artifactId: 'saved' }] }),
     openSetup: () => ({ ok: true }),
+    chooseConfig: () => desktopState({ folderLabel: '<img src=x>', configLabel: '<trusted.json>' }),
     ...overrides,
   };
   const desktop = Object.fromEntries(Object.entries(methods).map(([name, handler]) => [name, (...args) => { calls.push([name, ...args]); return handler(...args); }]));
@@ -137,8 +138,9 @@ test('desktop uses native folder selection and runs only the default OSV scan wi
   assert.match(h.node('execution-status').textContent, /cancelling/i);
   await [...h.timers.values()][0].fn();
   assert.match(h.node('execution-status').textContent, /partial/i);
-  await h.node('execution-refresh').emit('click');
+  assert.deepEqual(h.calls.at(-1), ['refreshResults']);
   assert.deepEqual(h.applied[0].slice(1, 3), ['saved', 1]);
+  assert.equal(h.node('execution-refresh').hidden, true);
   assert.equal(h.requests.length, 0);
 });
 
@@ -165,6 +167,37 @@ test('desktop presents install and authentication separately and sends AI tools 
   await h.node('execution-start').emit('click');
   assert.deepEqual(h.calls.at(-1), ['startScan', { toolIds: ['osv', 'codex-security'], aiConsent: true }]);
   assert.equal(consent.checked, false);
+});
+
+test('desktop selects seven ready tools, requires a PHP URL and AI consent, and sends a single request', async () => {
+  const toolIds = ['osv', 'skillspector', 'codex-security', 'open-code-review', 'php2shell', 'cloudflare', 'anthropic'];
+  const tools = toolIds.map((id) => ({ ...(['osv', 'skillspector', 'php2shell'].includes(id) ? localTool : aiTool), id }));
+  const h = nativeHarness({ chooseConfig: () => desktopState({ folderLabel: 'project', configLabel: '<trusted.json>', tools }) });
+  await h.settle();
+  await h.node('desktop-choose-config').emit('click');
+  assert.equal(h.node('desktop-config-label').textContent, '<trusted.json>');
+  const osv = h.node('desktop-tools').children[0].children[0].children[0];
+  osv.checked = false;
+  await osv.emit('change');
+  assert.equal(h.node('execution-start').disabled, true);
+  await h.node('desktop-select-all').emit('click');
+  assert.equal(h.node('desktop-php-target').hidden, false);
+  const consent = h.node('desktop-ai-consent');
+  consent.checked = true;
+  await consent.emit('change');
+  assert.equal(h.node('execution-start').disabled, true);
+  const phpUrl = h.node('desktop-php-url');
+  for (const invalid of ['https://app.example.test/?token=secret', 'https://app.example.test/#fragment', 'https://user:pass@app.example.test/']) {
+    phpUrl.value = invalid;
+    await phpUrl.emit('input');
+    assert.equal(h.node('execution-start').disabled, true);
+  }
+  phpUrl.value = 'https://app.example.test/';
+  await phpUrl.emit('input');
+  assert.equal(h.node('execution-start').disabled, false);
+  await h.node('execution-start').emit('click');
+  assert.deepEqual(h.calls.at(-1), ['startScan', { toolIds, aiConsent: true, phpUrl: phpUrl.value }]);
+  assert.equal(h.calls.filter(([name]) => name === 'startScan').length, 1);
 });
 
 test('missing OSV keeps start disabled and offers setup with a readiness recheck', async () => {

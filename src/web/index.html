@@ -4,40 +4,60 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>SEC HUB / 개발자 워크벤치</title>
+  <title>Security Scan Hub / 개발자 워크벤치</title>
   <link rel="stylesheet" href="/assets/style.css">
   <script type="module" src="/assets/app.mjs"></script>
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="본문으로 건너뛰기">본문으로 건너뛰기</a>
   <header class="masthead">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">SH</span><div><p class="eyebrow">LOCAL SECURITY WORKBENCH</p><h1>SEC HUB <span>/</span> <span data-i18n="개발자 워크벤치">개발자 워크벤치</span></h1></div></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true">SH</span><div><p class="eyebrow">LOCAL SECURITY WORKBENCH</p><h1>Security Scan Hub</h1></div></div>
     <div class="mast-meta"><label class="language-control"><span data-i18n="화면 언어">화면 언어</span><select id="language-select" aria-label="화면 언어" data-i18n-aria="화면 언어"><option value="ko">KO</option><option value="en">English</option></select></label><span id="execution-seal" class="seal" data-i18n="읽기 전용">읽기 전용</span><span id="snapshot-state">시작 스냅샷 대기</span></div>
   </header>
   <main id="main">
     <section id="desktop-scan" class="scan-console" aria-labelledby="desktop-scan-title" hidden>
       <header class="scan-console-header">
         <div><p class="eyebrow">SCAN / WORKSPACE</p><h2 id="desktop-scan-title" data-i18n="프로젝트 보안 검사">프로젝트 보안 검사</h2></div>
-        <p data-i18n="폴더를 선택하고 도구를 확인한 다음 검사를 시작하세요.">폴더를 선택하고 도구를 확인한 다음 검사를 시작하세요.</p>
+        <p data-i18n="설정한 보안 도구를 최대 7개까지 한 번에 실행하고, 결과를 한곳에서 확인하세요.">설정한 보안 도구를 최대 7개까지 한 번에 실행하고, 결과를 한곳에서 확인하세요.</p>
       </header>
       <div class="scan-stages">
         <section class="scan-stage" aria-labelledby="desktop-source-title">
           <p class="eyebrow">01 / SOURCE</p><h3 id="desktop-source-title" data-i18n="프로젝트 폴더">프로젝트 폴더</h3>
           <p id="desktop-folder" class="scan-folder mono" role="status"></p>
           <button id="desktop-choose-folder" class="quiet-button" type="button" disabled data-i18n="폴더 선택">폴더 선택</button>
+          <details id="desktop-config" class="scan-optional scan-config" hidden>
+            <summary data-i18n="고급 도구 설정">고급 도구 설정</summary>
+            <p class="scan-note" data-i18n="설정 파일에 지정된 프로그램은 현재 사용자 권한으로 실행됩니다. 직접 확인한 JSON 파일을 선택하세요.">설정 파일에 지정된 프로그램은 현재 사용자 권한으로 실행됩니다. 직접 확인한 JSON 파일을 선택하세요.</p>
+            <p id="desktop-config-label" class="scan-folder mono" role="status"></p>
+            <button id="desktop-choose-config" class="quiet-button" type="button" disabled data-i18n="도구 설정 파일 선택">도구 설정 파일 선택</button>
+            <div id="desktop-node" hidden>
+              <p id="desktop-node-label" class="scan-note" role="status"></p>
+              <button id="desktop-choose-node" class="quiet-button" type="button" disabled data-i18n="Node.js 실행 파일 선택">Node.js 실행 파일 선택</button>
+            </div>
+          </details>
         </section>
         <section class="scan-stage" aria-labelledby="desktop-readiness-title">
           <p class="eyebrow">02 / READINESS</p><h3 id="desktop-readiness-title" data-i18n="도구 준비 상태">도구 준비 상태</h3>
           <p class="scan-note" data-i18n="OSV는 알려진 의존성 취약점을 찾습니다. 패키지 정보가 취약점 조회 서비스에 전송될 수 있습니다.">OSV는 알려진 의존성 취약점을 찾습니다. 패키지 정보가 취약점 조회 서비스에 전송될 수 있습니다.</p>
+          <div class="scan-selection">
+            <button id="desktop-select-all" class="quiet-button" type="button" disabled data-i18n="준비된 도구 모두 선택">준비된 도구 모두 선택</button>
+            <span id="desktop-selection-count" class="mono" role="status"></span>
+          </div>
           <ul id="desktop-tools" class="scan-tools"></ul>
           <details id="desktop-optional" class="scan-optional" hidden>
-            <summary data-i18n="추가 도구 및 로그인 안내">추가 도구 및 로그인 안내</summary>
+            <summary data-i18n="추가 도구 및 설정 안내">추가 도구 및 설정 안내</summary>
             <ul id="desktop-optional-tools" class="scan-tools"></ul>
           </details>
           <button id="desktop-recheck" class="quiet-button" type="button" disabled data-i18n="도구 상태 다시 확인">도구 상태 다시 확인</button>
         </section>
         <section id="desktop-execution" class="scan-stage" aria-labelledby="desktop-run-title">
           <p class="eyebrow">03 / RUN</p><h3 id="desktop-run-title" data-i18n="검사 및 결과">검사 및 결과</h3>
+          <p class="scan-note" data-i18n="선택한 도구의 결과를 한 보고서로 저장하고 준비되면 자동으로 엽니다.">선택한 도구의 결과를 한 보고서로 저장하고 준비되면 자동으로 엽니다.</p>
+          <div id="desktop-php-target" class="scan-php" hidden>
+            <label for="desktop-php-url" data-i18n="PHP2Shell Checker 대상 URL">PHP2Shell Checker 대상 URL</label>
+            <input id="desktop-php-url" type="url" required inputmode="url" autocomplete="off" spellcheck="false" maxlength="2048" placeholder="https://example.com/" aria-describedby="desktop-php-details">
+            <p id="desktop-php-details" class="scan-note" data-i18n="검사 권한이 있는 HTTP(S) URL을 입력하세요. 쿼리, 프래그먼트, 로그인 정보는 제외하세요.">검사 권한이 있는 HTTP(S) URL을 입력하세요. 쿼리, 프래그먼트, 로그인 정보는 제외하세요.</p>
+          </div>
           <div id="desktop-ai-consent-box" class="scan-consent" hidden>
             <p id="desktop-ai-details" data-i18n="선택한 AI 도구가 프로젝트 소스와 관련 정보를 모델 제공업체에 전송할 수 있습니다. 계정의 API 또는 사용량 요금이 부과될 수 있습니다.">선택한 AI 도구가 프로젝트 소스와 관련 정보를 모델 제공업체에 전송할 수 있습니다. 계정의 API 또는 사용량 요금이 부과될 수 있습니다.</p>
             <label class="execution-tool"><input id="desktop-ai-consent" type="checkbox" aria-describedby="desktop-ai-details"><span data-i18n="이번 검사에서 AI 전송 및 발생할 수 있는 비용에 동의합니다.">이번 검사에서 AI 전송 및 발생할 수 있는 비용에 동의합니다.</span></label>
@@ -105,6 +125,6 @@
     </div>
     <noscript><p class="noscript" data-i18n="이 자료 화면을 사용하려면 브라우저에서 JavaScript를 켜세요.">이 자료 화면을 사용하려면 브라우저에서 JavaScript를 켜세요.</p></noscript>
   </main>
-  <footer><span>SEC HUB · LOCAL WORKBENCH</span><span id="snapshot-note" data-i18n="고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다">고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다</span></footer>
+  <footer><span>Security Scan Hub · Local Workbench</span><span id="snapshot-note" data-i18n="고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다">고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다</span></footer>
 </body>
 </html>

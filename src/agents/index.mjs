@@ -17,7 +17,7 @@ export const nativeAgentAdapters=['cloudflare','anthropic'].map(id=>({
   network:'Source and context are uploaded to the configured model backend; target execution is prohibited.',
   install:'Install the official native backend and configure a clean pinned official skill checkout; existing native authentication is used.',
   check:ctx=>check(id,ctx),
-  build:ctx=>({command:process.execPath,args:[wrapper,JSON.stringify(configuration(id,ctx))],successCodes:[0],findingCodes:[2]}),
+  build:ctx=>({command:ctx.nodeExecutable??process.execPath,args:[wrapper,JSON.stringify(configuration(id,ctx))],successCodes:[0],findingCodes:[2]}),
   parse:async ctx=>(await validateNativeExecution(id,ctx)).findings,
   executionMetadata:async ctx=>(await finalizeNativeExecution(id,ctx)).execution,
 }));

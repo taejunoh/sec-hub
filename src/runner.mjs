@@ -94,9 +94,10 @@ async function preflightNativeLocations(target,out,agents,config) {
 }
 
 export async function runScan(options) {
-  const {ai=false,url,config={tools:{}},timeoutMs=120000,signal}=options;
+  const {ai=false,url,config={tools:{}},timeoutMs=120000,signal,nodeExecutable}=options;
   const onCleanupUnconfirmed=()=>observe(options.onCleanupUnconfirmed);
   checkCancelled(signal);
+  if(nodeExecutable!==undefined&&(typeof nodeExecutable!=='string'||!isAbsolute(nodeExecutable)))throw new Error('Native Node executable must be an absolute path');
   if(url){let parsed;try{parsed=new URL(url);}catch{throw new Error('URL must be explicit HTTP(S)');}if(!['http:','https:'].includes(parsed.protocol)||parsed.username||parsed.password)throw new Error('URL must be HTTP(S) without embedded credentials');}
   const available=options.adapters??(await import('./adapters/index.mjs')).adapters;
   const selected=new Set(options.tools??(ai?available.filter(x=>x.kind!=='agent'&&(x.id!=='php2shell'||url)).map(x=>x.id):['osv','skillspector',...(url?['php2shell']:[])]));
@@ -123,7 +124,7 @@ export async function runScan(options) {
     if(adapter.kind==='agent'&&!config.tools?.[adapter.id]){record.reason='Requires explicit executable configuration';finished(record);continue;}
     if(signal?.aborted){record.status='cancelled';record.reason='Cancelled by user';finished(record);continue;}
     const artifactDir=join(directory,'raw',adapter.id);await ensureSafeDirectory(artifactDir);
-    const ctx={target:target.path,url,ai,config,artifactDir,signal,onCleanupUnconfirmed};
+    const ctx={target:target.path,url,ai,config,artifactDir,signal,onCleanupUnconfirmed,nodeExecutable};
     let executionContext;
     try {
       if(signal?.aborted){record.status='cancelled';record.reason='Cancelled during artifact preparation';continue;}

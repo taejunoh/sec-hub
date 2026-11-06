@@ -279,11 +279,11 @@ export async function verifySourcePin(id,options,{signal,onCleanupUnconfirmed,su
   if(id==='anthropic'){const settings=JSON.parse(files.get('.claude/settings.json').toString());if(JSON.stringify(settings)!==JSON.stringify({env:{ANTHROPIC_CUSTOM_HEADERS:'anthropic-cyber-runbook: skills'}}))throw new Error('Unsupported pinned project settings');}
   return instructions.sort((a,b)=>a.path.localeCompare(b.path));
 }
-export async function runOfficialValidators(options,artifactDir,{signal,onCleanupUnconfirmed,superviseProcesses=false}={}){
+export async function runOfficialValidators(options,artifactDir,{signal,onCleanupUnconfirmed,superviseProcesses=false,nodeExecutable=process.execPath}={}){
   signal?.throwIfAborted();await verifySourcePin('cloudflare',options,{signal,onCleanupUnconfirmed,superviseProcesses});signal?.throwIfAborted();
   const results=[];for(const [script,file] of [['validate-findings.cjs','findings.json'],['validate-coverage-ledger.cjs','coverage-ledger.json']]){
     signal?.throwIfAborted();
-    try{const result=await verificationProcess(process.execPath,[join(options.skillRoot,'skills/security-audit',script),join(artifactDir,file)],{timeout:10000,maxBuffer:256*1024,signal,onCleanupUnconfirmed,superviseProcesses});signal?.throwIfAborted();results.push({script,exitCode:0,stdout:result.stdout.trim()});}catch(error){signal?.throwIfAborted();results.push({script,exitCode:typeof error.code==='number'?error.code:1,stderr:String(error.stderr??'validator failed').slice(0,10000)});}
+    try{const result=await verificationProcess(nodeExecutable,[join(options.skillRoot,'skills/security-audit',script),join(artifactDir,file)],{timeout:10000,maxBuffer:256*1024,signal,onCleanupUnconfirmed,superviseProcesses});signal?.throwIfAborted();results.push({script,exitCode:0,stdout:result.stdout.trim()});}catch(error){signal?.throwIfAborted();results.push({script,exitCode:typeof error.code==='number'?error.code:1,stderr:String(error.stderr??'validator failed').slice(0,10000)});}
   }return results;
 }
 export async function finalizeNativeExecution(id,ctx){
@@ -332,7 +332,7 @@ export async function validateNativeExecution(id,ctx){
   const sealed=manifest.finalRetainedHashes??manifest.preRedactionHashes;if(!sealed||(id==='anthropic'&&registered&&!sameInputs(Object.keys(sealed).sort(),Object.keys(retainedHashes).sort()))||Object.entries(retainedHashes).some(([name,hash])=>sealed[name]!==hash))throw new Error(`${id}: retained native evidence hashes differ`);
   let findings=[],validators=[];const reasons=[...native.reasons];
   if(id==='cloudflare'){
-    validators=await runOfficialValidators(options,ctx.artifactDir,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true});if(validators.some(x=>x.exitCode!==0))reasons.push('Official native validator failed');
+    validators=await runOfficialValidators(options,ctx.artifactDir,{signal:ctx.signal,onCleanupUnconfirmed:ctx.onCleanupUnconfirmed,superviseProcesses:true,nodeExecutable:ctx.nodeExecutable});if(validators.some(x=>x.exitCode!==0))reasons.push('Official native validator failed');
     const metadata=JSON.parse((await safeRead(join(ctx.artifactDir,'run-metadata.json'))).toString());if(metadata.run_status!=='complete'||metadata.profile!=='quick')reasons.push('Official audit run is incomplete');
     const doc=JSON.parse((await safeRead(join(ctx.artifactDir,'findings.json'))).toString());
     if(validators.every(x=>x.exitCode===0)&&Array.isArray(doc)){native.independentRecords=verifyCloudflareRecords(doc,events,native);findings=doc.filter(f=>f.verdict!=='rejected').map(f=>{const loc=f.trace[0],input=manifest.inputs.find(x=>x.path===loc.file);if(!input||loc.line>input.lines)throw new Error('Cloudflare invalid finding location');if(f.verdict==='confirmed')reasons.push('Source-only workflow cannot retain dynamic confirmation');return {toolId:id,ruleId:f.fingerprint,title:f.title,description:f.description,severity:f.verdict==='needs_validation'?'unknown':f.severity.overall_severity==='informational'?'info':f.severity.overall_severity,verification:'candidate',location:{path:loc.file,line:loc.line},evidence:{native:f,dynamicVerification:'not-performed'},rawRef:join(ctx.artifactDir,'findings.json')};});}

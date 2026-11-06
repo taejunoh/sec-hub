@@ -23,7 +23,9 @@ if (smokeDir) {
   fs.mkdirSync(profile, { recursive: true, mode: 0o700 });
   app.setPath('userData', profile);
 }
+// Keep the original Electron name so existing users retain their saved scan directory.
 app.setName('Sec Hub');
+const productName = 'Security Scan Hub';
 const hasLock = app.requestSingleInstanceLock();
 if (!hasLock) {
   app.quit();
@@ -72,8 +74,8 @@ if (!hasLock) {
   async function friendlyFailure() {
     if (quitPromise || smokeDir) return;
     const answer = await dialog.showMessageBox(window, {
-      type: 'error', title: 'Sec Hub', message: 'The saved results view could not be loaded.',
-      detail: 'Reload the results, show the bundled example, or quit and reopen Sec Hub.',
+      type: 'error', title: productName, message: 'The saved results view could not be loaded.',
+      detail: `Reload the results, show the bundled example, or quit and reopen ${productName}.`,
       buttons: ['Reload results', 'Show example', 'Quit'], defaultId: 0, cancelId: 2,
     });
     if (answer.response === 0 && controller?.current) {
@@ -87,7 +89,7 @@ if (!hasLock) {
       import('./controller.mjs'), import('./policy.mjs'), import('./tools.mjs'),
     ]);
     const core = app.isPackaged ? path.join(process.resourcesPath, 'core') : path.resolve(__dirname, '..', '..');
-    const [{ startDashboard }, { createDesktopScanController }] = await Promise.all(['server', 'desktop-execution'].map(
+    const [{ startDashboard }, { createDesktopScanController }, { inspectDesktopTooling }] = await Promise.all(['server', 'desktop-execution', 'desktop-tooling'].map(
       (name) => import(pathToFileURL(path.join(core, 'src', 'dashboard', `${name}.mjs`)).href),
     ));
     const trusted = (url) => isOwnedUrl(url, activeUrl);
@@ -101,7 +103,7 @@ if (!hasLock) {
     currentSession.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => callback({ cancel: !trusted(details.url) }));
     window = new BrowserWindow({
       width: 1440, height: 980, minWidth: 850, minHeight: 600, show: true,
-      title: 'Sec Hub — Example data · No new scan',
+      title: `${productName} — Example data · No new scan`,
       webPreferences: { session: currentSession, preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, devTools: false },
     });
     window.on('close', (event) => { event.preventDefault(); requestQuit(); });
@@ -152,13 +154,24 @@ if (!hasLock) {
       show: async ({ url, example }) => {
         activeUrl = url; loaded = false;
         await window.loadURL(url);
-        window.setTitle(example ? 'Sec Hub — Example data · No new scan' : 'Sec Hub — Saved results');
+        window.setTitle(example ? `${productName} — Example data · No new scan` : `${productName} — Saved results`);
       },
       notify: async (message) => {
-        if (!smokeDir && !quitPromise) await dialog.showMessageBox(window, { type: 'warning', title: 'Sec Hub', message });
+        if (!smokeDir && !quitPromise) await dialog.showMessageBox(window, { type: 'warning', title: productName, message });
       },
     });
-    const inspectTools = () => inspectDesktopTools(app.isPackaged ? process.resourcesPath : null);
+    // Version checks and scanners inherit a trusted working directory even
+    // when the app was opened from a terminal inside a project.
+    process.chdir(core);
+    const inspectTools = async (options) => inspectDesktopTooling(await inspectDesktopTools(app.isPackaged ? process.resourcesPath : null), options);
+    async function pickFile(options) {
+      if (smokeDir && smokeSelection) {
+        const selected = smokeSelection; smokeSelection = undefined;
+        return selected;
+      }
+      const result = await dialog.showOpenDialog(window, { properties: ['openFile'], ...options });
+      return result.canceled ? undefined : result.filePaths[0];
+    }
     try {
       scanHost = await createDesktopScanController({
         runs,
@@ -168,9 +181,26 @@ if (!hasLock) {
           const result = await dialog.showOpenDialog(window, { title: 'Choose a project folder', buttonLabel: 'Choose folder', properties: ['openDirectory'] });
           return result.canceled ? undefined : result.filePaths[0];
         },
+        async pickConfig() {
+          const chosen = await pickFile({
+            title: `Choose a trusted ${productName} configuration`, buttonLabel: 'Choose configuration',
+            filters: [{ name: `${productName} JSON configuration`, extensions: ['json'] }],
+          });
+          if (!chosen || smokeDir) return chosen;
+          const trust = await dialog.showMessageBox(window, {
+            type: 'warning', title: productName, message: 'Trust this scanner configuration?',
+            detail: `${productName} can run the executables and arguments named by this file. Choose a configuration that you created or reviewed, and keep it outside the project you scan.`,
+            buttons: ['Cancel', 'Trust configuration'], defaultId: 0, cancelId: 0,
+          });
+          return trust.response === 1 ? chosen : undefined;
+        },
+        pickNode: () => pickFile({
+          title: 'Choose a trusted Node.js executable (version 22 or later)', buttonLabel: 'Choose Node.js',
+          ...(process.platform === 'win32' ? { filters: [{ name: 'Node.js executable', extensions: ['exe'] }] } : {}),
+        }),
         async confirmAI({ folderLabel, toolIds, signal }) {
           const result = await dialog.showMessageBox(window, {
-            type: 'warning', title: 'Sec Hub', message: 'Run AI security tools?',
+            type: 'warning', title: productName, message: 'Run AI security tools?',
             detail: `${toolIds.join(', ')} may send code and related context from “${folderLabel}” to model providers and may incur charges. This approval applies to this run only.`,
             buttons: ['Cancel', 'Run AI tools'], defaultId: 0, cancelId: 0, signal,
           });
@@ -179,14 +209,14 @@ if (!hasLock) {
         openExternal: (url) => shell.openExternal(url),
         async refreshCatalog(jobs, generation, current) {
           const result = await controller.refreshDesktopCatalog(jobs, generation, current);
-          if (current()) window.setTitle('Sec Hub — Recent scans');
+          if (current()) window.setTitle(`${productName} — Recent scans`);
           return result;
         },
       });
     } catch { /* An unsafe/unavailable output root must not disable saved results viewing. */ }
     const unavailable = { error: { code: 'execution_unavailable' } };
-    const channelArities = { getState: 0, chooseFolder: 0, startScan: 1, getJob: 0, cancelScan: 0, refreshResults: 0, openSetup: 2 };
-    const focusedActions = new Set(['chooseFolder', 'startScan', 'openSetup']);
+    const channelArities = { getState: 0, chooseFolder: 0, chooseConfig: 0, chooseNode: 0, startScan: 1, getJob: 0, cancelScan: 0, refreshResults: 0, openSetup: 2 };
+    const focusedActions = new Set(['chooseFolder', 'chooseConfig', 'chooseNode', 'startScan', 'openSetup']);
     for (const [method, arity] of Object.entries(channelArities)) {
       ipcMain.handle(`sec-hub:${method}`, async (event, ...args) => {
         const epoch = viewEpoch;
@@ -197,7 +227,7 @@ if (!hasLock) {
           if (!scanHost) {
             if (method !== 'getState') return unavailable;
             const tools = (await inspectTools()).map(({ id, installation, ai }) => ({ id, installation, ai, selectable: false, authentication: ai ? 'unknown' : 'not_required' }));
-            return { folderLabel: null, tools, job: null, generation: 0 };
+            return { folderLabel: null, configLabel: null, nodeConfigured: false, tools, job: null, generation: 0 };
           }
           return await scanHost[method](...args, current);
         } catch { return { error: { code: 'internal_error' } }; }
@@ -216,14 +246,14 @@ if (!hasLock) {
     });
     const invoke = (operation) => () => { void operation().catch(() => friendlyFailure()); };
     Menu.setApplicationMenu(Menu.buildFromTemplate([
-      ...(process.platform === 'darwin' ? [{ label: 'Sec Hub', submenu: [{ label: 'Quit Sec Hub', accelerator: 'Cmd+Q', click: requestQuit }] }] : []),
+      ...(process.platform === 'darwin' ? [{ label: productName, submenu: [{ label: `Quit ${productName}`, accelerator: 'Cmd+Q', click: requestQuit }] }] : []),
       { label: 'File', submenu: [
         { label: 'Open saved results folder…', accelerator: 'CmdOrCtrl+O', click: invoke(actions.openSavedResults) },
         { label: 'Show recent scans', enabled: Boolean(scanHost), click: invoke(async () => {
           const epoch = viewEpoch;
           const result = await scanHost.refreshResults(() => !quitPromise && epoch === viewEpoch);
           if (result.error) {
-            await dialog.showMessageBox(window, { type: 'warning', title: 'Sec Hub', message: 'Recent scans are unavailable while a scan is running, or the results could not be loaded.' });
+            await dialog.showMessageBox(window, { type: 'warning', title: productName, message: 'Recent scans are unavailable while a scan is running, or the results could not be loaded.' });
           } else await window.loadURL(activeUrl);
         }) },
         { label: 'Show example', click: invoke(() => controller.showExample()) },
@@ -255,7 +285,7 @@ if (!hasLock) {
     if (smokeDir) {
       const filename = path.join(smokeDir, 'summary.json');
       if (!fs.existsSync(filename)) fs.writeFileSync(filename, JSON.stringify({ status: 'failed', runtime: { electron: process.versions.electron, node: process.versions.node, platform: process.platform, arch: process.arch }, checks: {}, urls, error: 'desktop_startup_failed' }), { flag: 'wx', mode: 0o600 });
-    } else await dialog.showMessageBox({ type: 'error', title: 'Sec Hub', message: 'Sec Hub could not open the saved results viewer. Quit and reopen the application.' });
+    } else await dialog.showMessageBox({ type: 'error', title: productName, message: `${productName} could not open the saved results viewer. Quit and reopen the application.` });
     app.exit(1);
   });
 }

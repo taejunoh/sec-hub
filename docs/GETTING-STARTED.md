@@ -48,3 +48,5 @@ project is safe.
 OSV is the only scanner this desktop release can run. Other scanners,
 including AI tools, may appear in the setup section. The app cannot run them
 or confirm whether they are installed or signed in to a provider.
+
+For the current source build, see [how to run a desktop multi-tool scan](../desktop/README.md#run-a-multi-tool-scan).

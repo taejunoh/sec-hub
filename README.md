@@ -1,17 +1,20 @@
-# Sec Hub
+# Security Scan Hub
 
-**Run seven security tools and workflows through one CLI. Review their results
-in one report.** Sec Hub brings together dependency checks, AI skill scanning,
-code review, and URL checks. The report shows findings alongside which tools
-completed, were skipped, or failed. Results are available as HTML, JSON, and SARIF.
+**Run seven security tools in a single scan. Review the results in one place.**
+Security Scan Hub combines dependency checks, AI skill scanning, code review,
+and URL checks in one report. See the findings and which tools completed,
+were skipped, or failed. Results are available as HTML, JSON, and SARIF.
 
-**Desktop quick start:** The [Desktop 0.2.1 prerelease](#download-sec-hub-desktop-021)
-bundles Google OSV Scanner for dependency checks without a terminal. Use the
-CLI to select and configure all seven integrations.
+**Desktop quick start.** Download the [desktop prerelease](https://github.com/taejunoh/sec-hub/releases)
+and run Google OSV Scanner without a terminal. To run multiple tools,
+select them in the app and click **Start scan**. The combined report opens
+automatically in the **Security Inbox**. A supported Mac can run all seven
+after setup. On Windows, the Cloudflare and Anthropic workflows are disabled.
+Follow the [desktop setup guide](desktop/README.md#run-a-multi-tool-scan).
 
 ## Seven integrations
 
-| Upstream project | What Sec Hub runs |
+| Upstream project | What it checks |
 | --- | --- |
 | [Google OSV Scanner](https://github.com/google/osv-scanner) | Finds known vulnerabilities in project dependencies. |
 | [NVIDIA SkillSpector](https://github.com/NVIDIA/SkillSpector) | Scans AI agent skills for suspicious patterns in static mode. |
@@ -42,7 +45,7 @@ describes how results from the seven integrations were checked and combined.
 
 ![Security inbox with findings on the left and the selected advisory on the right](docs/images/security-inbox-wide.png)
 
-The screenshots show the current Security inbox with results from an OSV scan
+The screenshots show the Security Inbox with results from an OSV scan
 in the macOS 0.2.0 development build. The demo project's `lodash` 4.17.20
 dependency had four findings, two high and two medium. The 0.2.1 prerelease
 packages include this inbox.
@@ -67,7 +70,8 @@ results** restores the search, filters, scroll position, and keyboard focus.
 
 ## Download Sec Hub Desktop 0.2.1
 
-Choose the ZIP for your computer.
+This earlier OSV-only release is listed here for users who need version 0.2.1.
+For the current Security Scan Hub desktop build, see [GitHub Releases](https://github.com/taejunoh/sec-hub/releases).
 
 | Your computer | Download |
 | --- | --- |
@@ -79,7 +83,7 @@ and Windows ARM devices are outside its support range.
 [Browse all release assets](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1).
 Verify either ZIP with the [SHA-256 checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
 
-## Run your first scan
+## Run your first scan with 0.2.1
 
 1. **Extract the ZIP.** On Mac, double-click the ZIP and open **Sec Hub.app**.
    On Windows, right-click the ZIP, choose **Extract All**, then open
@@ -104,7 +108,7 @@ error message and try again after resolving it.
 **Choose a folder → Read the package list → Look up known vulnerabilities →
 Save the report**
 
-Electron provides the desktop window. Sec Hub's Node.js code starts the
+Electron provides the desktop window. The app starts the
 bundled Google OSV Scanner and saves its results for the app to display. You
 can run a scan without installing Node.js or creating an OSV account.
 

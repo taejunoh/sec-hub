@@ -11,11 +11,11 @@ const lock = JSON.parse(await readFile(new URL('./osv-lock.json', import.meta.ur
 const catalog = [
   { id: 'osv', ai: false, setup: { install: 'https://google.github.io/osv-scanner/installation/' } },
   { id: 'skillspector', ai: false, setup: { install: 'https://github.com/NVIDIA/skillspector' } },
-  { id: 'codex-security', ai: true, setup: { install: 'https://github.com/openai/codex-security' } },
-  { id: 'open-code-review', ai: true, setup: { install: 'https://github.com/alibaba/open-code-review' } },
+  { id: 'codex-security', ai: true, setup: { install: 'https://github.com/openai/codex-security', sign_in: 'https://github.com/openai/codex-security/blob/main/sdk/typescript/docs/cli.md#authentication' } },
+  { id: 'open-code-review', ai: true, setup: { install: 'https://github.com/alibaba/open-code-review', sign_in: 'https://github.com/alibaba/open-code-review/blob/main/pages/src/content/docs/en/cli-reference.md#ocr-auth' } },
   { id: 'php2shell', ai: false, setup: { install: 'https://github.com/openai/php2shell-checker' } },
-  { id: 'cloudflare', ai: true, setup: { install: 'https://github.com/cloudflare/security-audit-skill' } },
-  { id: 'anthropic', ai: true, setup: { install: 'https://github.com/anthropics/defending-code-reference-harness' } },
+  { id: 'cloudflare', ai: true, setup: { install: 'https://github.com/cloudflare/security-audit-skill', sign_in: 'https://developers.openai.com/codex/auth/' } },
+  { id: 'anthropic', ai: true, setup: { install: 'https://github.com/anthropics/defending-code-reference-harness', sign_in: 'https://code.claude.com/docs/en/authentication' } },
 ];
 
 function unchangedFile(before, after) {

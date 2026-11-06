@@ -8,7 +8,24 @@ const desktopMethods = ['getState', 'chooseFolder', 'startScan', 'getJob', 'canc
 const setupLabels = { install: '설치 안내', sign_in: '로그인 안내' };
 const installationLabels = { installed: '설치 감지됨', missing: '설치를 감지하지 못함', unknown: '설치 상태 미확인' };
 const authenticationLabels = { unknown: '로그인 미확인', not_required: '로그인 필요 없음' };
-const desktopToolNames = { osv: 'OSV Scanner', skillspector: 'SkillSpector', 'codex-security': 'Codex Security', 'open-code-review': 'Open Code Review', cloudflare: 'Cloudflare', anthropic: 'Claude', php2shell: 'PHP2Shell Checker' };
+const desktopToolNames = { osv: 'OSV Scanner', skillspector: 'SkillSpector', 'codex-security': 'Codex Security', 'open-code-review': 'Open Code Review', cloudflare: 'Cloudflare Security Audit', anthropic: 'Anthropic Defending Code', php2shell: 'PHP2Shell Checker' };
+const desktopToolGuides = {
+  osv: 'OSV Scanner를 설치한 뒤 도구 상태를 다시 확인하세요.',
+  skillspector: 'SkillSpector를 설치하고 루트에 SKILL.md가 있는 폴더를 선택하세요. 정적 분석 모드로 실행합니다.',
+  'codex-security': 'Codex Security CLI를 설치하고 사용할 계정으로 인증한 뒤 CLI 설정을 확인하세요.',
+  'open-code-review': 'Open Code Review CLI를 설치하고 사용할 모델 제공업체의 인증과 모델을 설정하세요.',
+  php2shell: 'Node.js와 공식 검사 스크립트를 설치하고 설정 파일에 절대 경로를 지정하세요.',
+  cloudflare: 'Codex CLI에 로그인하고 공식 감사 스킬과 작업 디렉터리를 설정 파일에 지정하세요.',
+  anthropic: 'Claude Code에 로그인하고 공식 하네스와 작업 디렉터리를 설정 파일에 지정하세요.',
+};
+const unavailableLabels = {
+  platform_unsupported: '이 플랫폼에서 사용할 수 없습니다.',
+  config_required: '신뢰할 수 있는 도구 설정 파일이 필요합니다.',
+  executable_missing: '설정한 실행 파일을 찾을 수 없습니다.',
+  configuration_invalid: '도구 설정을 확인하세요.',
+  node_required: '이 도구를 실행하려면 Node.js 22 이상이 필요합니다.',
+};
+export const desktopToolName = (id) => Object.hasOwn(desktopToolNames, id) ? desktopToolNames[id] : id;
 
 export function consumeExecutionSession({ location, history, storage }) {
   const hash = location.hash;
@@ -59,6 +76,10 @@ const desktopErrors = {
   target_not_found: '검사할 폴더를 먼저 선택하세요.',
   target_unavailable: '이 폴더를 열 수 없습니다. 접근할 수 있는 프로젝트 폴더를 선택하세요.',
   tool_unavailable: '선택한 도구를 실행할 수 없습니다. 도구 상태를 다시 확인하세요.',
+  config_unavailable: '도구 설정 파일을 읽을 수 없습니다. 신뢰할 수 있는 유효한 JSON 파일을 선택하세요.',
+  node_unavailable: 'Node.js를 실행할 수 없습니다. 신뢰할 수 있는 Node.js 22 이상 실행 파일을 선택하세요.',
+  php_url_required: 'PHP2Shell Checker에 검사할 URL을 입력하세요.',
+  invalid_php_url: 'PHP2Shell Checker에 올바른 HTTP 또는 HTTPS URL을 입력하세요.',
   ai_consent_required: 'AI 도구를 실행하려면 이번 검사의 전송 및 비용에 동의하세요.',
 };
 export function executionStatus(job, locale = 'ko') {
@@ -90,6 +111,8 @@ const validJob = (job) => record(job)
   && Array.isArray(job.progress.tools) && job.progress.tools.every((tool) => record(tool) && typeof tool.id === 'string' && typeof tool.status === 'string');
 const validDesktopState = (state) => record(state)
   && (state.folderLabel === null || (typeof state.folderLabel === 'string' && state.folderLabel.length > 0))
+  && (state.nodeConfigured === undefined || typeof state.nodeConfigured === 'boolean')
+  && (state.configLabel == null || typeof state.configLabel === 'string')
   && Number.isSafeInteger(state.generation) && state.generation >= 0
   && (state.job === null || validJob(state.job))
   && Array.isArray(state.tools) && state.tools.every((tool) => record(tool) && typeof tool.id === 'string'
@@ -130,9 +153,12 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
   let message = '';
   let lastRefresh = null;
   let openedJobId = null;
+  let autoRefreshJobId = null;
   let toolSignature = '';
   const toolNodes = new Map();
   let folderLabel = null;
+  let configLabel = null;
+  let nodeConfigured = false;
   let readiness = [];
   let readinessSignature = '';
   const readinessNodes = new Map();
@@ -203,6 +229,22 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
   }
   const readyTool = (tool) => tool.selectable && tool.installation === 'installed';
   const usesAI = () => readiness.some((tool) => tool.ai && selection.toolIds.includes(tool.id));
+  const usesPHP = () => selection.toolIds.includes('php2shell');
+  const phpURL = () => usesPHP() ? $('desktop-php-url').value?.trim() ?? '' : '';
+  function validPHPSelection() {
+    if (!usesPHP()) return true;
+    const value = phpURL();
+    if (value.length > 2048 || !/^https?:\/\//i.test(value) || /[\x00-\x20\x7f\\?#]/.test(value)) return false;
+    try {
+      const url = new URL(value);
+      return !url.username && !url.password;
+    } catch { return false; }
+  }
+  function chooseTools(toolIds) {
+    selection.toolIds = toolIds;
+    $('desktop-ai-consent').checked = false;
+    draw();
+  }
 
   function drawReadiness() {
     const busy = pending || active(job);
@@ -212,6 +254,15 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     $('desktop-choose-folder').textContent = t(folderLabel ? '폴더 변경' : '폴더 선택');
     $('desktop-choose-folder').disabled = !enabled || busy;
     $('desktop-recheck').disabled = pending || (enabled && active(job));
+    $('desktop-config').hidden = typeof desktop.chooseConfig !== 'function';
+    $('desktop-choose-config').disabled = !enabled || busy;
+    $('desktop-config-label').textContent = configLabel ?? t('선택한 도구 설정 없음');
+    $('desktop-node').hidden = typeof desktop.chooseNode !== 'function';
+    $('desktop-choose-node').disabled = !enabled || busy;
+    $('desktop-node-label').textContent = t(nodeConfigured ? 'Node.js 실행 파일을 선택했습니다.' : '필요한 경우 Node.js 22 이상 실행 파일을 선택하세요.');
+    const readyCount = readiness.filter(readyTool).length;
+    $('desktop-select-all').disabled = !enabled || busy || !folderLabel || selection.toolIds.length === readyCount;
+    $('desktop-selection-count').textContent = t('선택 {selected}개 / 준비 {ready}개', { selected: selection.toolIds.length, ready: readyCount });
     const signature = JSON.stringify(readiness);
     if (signature !== readinessSignature) {
       readinessSignature = signature;
@@ -221,20 +272,18 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
       $('desktop-optional').hidden = readiness.every((tool) => tool.id === 'osv');
       for (const tool of readiness) {
         const row = make('li', 'scan-tool');
-        const heading = make(readyTool(tool) && tool.id !== 'osv' ? 'label' : 'div', 'scan-tool-name');
+        const heading = make(readyTool(tool) ? 'label' : 'div', 'scan-tool-name');
         let checkbox;
-        if (readyTool(tool) && tool.id !== 'osv') {
+        if (readyTool(tool)) {
           checkbox = make('input');
           checkbox.type = 'checkbox';
           checkbox.addEventListener('change', () => {
             if (checkbox.disabled) return;
-            selection.toolIds = readiness.filter((item) => item.id === 'osv' ? readyTool(item) : readinessNodes.get(item.id)?.checkbox?.checked).map((item) => item.id);
-            $('desktop-ai-consent').checked = false;
-            draw();
+            chooseTools(readiness.filter((item) => readinessNodes.get(item.id)?.checkbox?.checked).map((item) => item.id));
           });
           heading.append(checkbox);
         }
-        heading.append(make('strong', '', Object.hasOwn(desktopToolNames, tool.id) ? desktopToolNames[tool.id] : tool.id));
+        heading.append(make('strong', '', desktopToolName(tool.id)));
         const scope = tool.id === 'osv' ? '기본 검사' : !tool.selectable ? '이 앱에서 실행할 수 없음' : '';
         const scopeBadge = scope ? make('span', 'scan-tool-scope') : null;
         if (scopeBadge) heading.append(scopeBadge);
@@ -255,14 +304,22 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
           actions.append(button);
           return [action, button];
         });
-        row.append(heading, installation, authentication, actions);
+        const guide = make('p', 'scan-tool-guide');
+        const reason = make('p', 'scan-tool-guide');
+        const guideKey = Object.hasOwn(desktopToolGuides, tool.id) && (tool.id !== 'osv' || !readyTool(tool)) ? desktopToolGuides[tool.id] : '';
+        const reasonKey = !readyTool(tool) && Object.hasOwn(unavailableLabels, tool.unavailableReason) ? unavailableLabels[tool.unavailableReason] : '';
+        guide.hidden = !guideKey;
+        reason.hidden = !reasonKey;
+        row.append(heading, installation, authentication, actions, guide, reason);
         $(tool.id === 'osv' ? 'desktop-tools' : 'desktop-optional-tools').append(row);
-        readinessNodes.set(tool.id, { checkbox, scope, scopeBadge, installation, authentication, buttons });
+        readinessNodes.set(tool.id, { checkbox, scope, scopeBadge, installation, authentication, buttons, guide, guideKey, reason, reasonKey });
       }
     }
     for (const tool of readiness) {
-      const { checkbox, scope, scopeBadge, installation, authentication, buttons } = readinessNodes.get(tool.id);
+      const { checkbox, scope, scopeBadge, installation, authentication, buttons, guide, guideKey, reason, reasonKey } = readinessNodes.get(tool.id);
       if (scopeBadge) scopeBadge.textContent = t(scope);
+      guide.textContent = t(guideKey);
+      reason.textContent = t(reasonKey);
       installation.textContent = t(installationLabels[tool.installation]);
       authentication.textContent = t(authenticationLabels[tool.authentication]);
       if (checkbox) {
@@ -274,6 +331,8 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
         button.disabled = !enabled || busy;
       }
     }
+    $('desktop-php-target').hidden = !usesPHP();
+    $('desktop-php-url').disabled = !usesPHP() || !enabled || busy;
     $('desktop-ai-consent-box').hidden = !usesAI();
     $('desktop-ai-consent').disabled = !enabled || busy;
   }
@@ -306,7 +365,7 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     $('execution-target').disabled = controls.inputsDisabled;
     $('execution-toolset').disabled = controls.inputsDisabled;
     for (const [id, node] of toolNodes) { node.disabled = controls.inputsDisabled; node.checked = selection.toolIds.includes(id); }
-    $('execution-start').disabled = controls.startDisabled || Boolean(desktop && usesAI() && !$('desktop-ai-consent').checked);
+    $('execution-start').disabled = controls.startDisabled || Boolean(desktop && (!validPHPSelection() || (usesAI() && !$('desktop-ai-consent').checked)));
     $('execution-cancel').disabled = controls.cancelDisabled;
     $('execution-refresh').disabled = controls.refreshDisabled;
     $('execution-refresh').hidden = !terminal(job) || !job?.reportsReady || Boolean(desktop && job.id === openedJobId);
@@ -328,10 +387,10 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
       $('execution-coverage').textContent = job.runStatus ? t('검사 범위 상태: {status}', { status: t(runStatusLabel(job.runStatus)) }) : t('검사 완료와 안전 확인은 다릅니다.');
       const badges = $('execution-tool-status');
       badges.replaceChildren();
-      for (const tool of job.progress?.tools ?? []) badges.append(make('li', 'tag', `${tool.id} · ${(['pending', 'checking', 'scanning'].includes(tool.status) ? t({ pending: '대기 중', checking: '확인 중', scanning: '검사 중' }[tool.status]) : toolStatusLabel(tool.status, getLocale()))}`));
+      for (const tool of job.progress?.tools ?? []) badges.append(make('li', 'tag', `${desktop ? desktopToolName(tool.id) : tool.id} · ${(['pending', 'checking', 'scanning'].includes(tool.status) ? t({ pending: '대기 중', checking: '확인 중', scanning: '검사 중' }[tool.status]) : toolStatusLabel(tool.status, getLocale()))}`));
     }
     $('execution-quota').hidden = !quotaReached;
-    $('execution-quota').textContent = t(desktop ? '이 세션의 검사 한도에 도달했습니다. Sec Hub를 다시 여세요.' : '이 세션의 검사 한도에 도달했습니다. 운영자가 서버를 다시 시작해야 합니다.');
+    $('execution-quota').textContent = t(desktop ? '이 세션의 검사 한도에 도달했습니다. Security Scan Hub를 다시 여세요.' : '이 세션의 검사 한도에 도달했습니다. 운영자가 서버를 다시 시작해야 합니다.');
   }
   function schedulePoll() {
     window.clearTimeout(timer);
@@ -355,6 +414,7 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
       draw();
       schedulePoll();
     }
+    await openDesktopResult();
   }
   $('execution-target').addEventListener('change', () => {
     selection = executionSelection(targets, { targetId: $('execution-target').value });
@@ -364,14 +424,16 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     if ($('execution-start').disabled) return;
     const toolIds = [...selection.toolIds];
     const aiConsent = Boolean(desktop && usesAI() && $('desktop-ai-consent').checked);
+    const phpUrl = desktop ? phpURL() : '';
     if (desktop) $('desktop-ai-consent').checked = false;
     revision++; window.clearTimeout(timer);
     pending = true; message = '검사를 시작하는 중…'; draw();
     try {
-      const value = desktop ? await nativeRequest('startScan', [{ toolIds, aiConsent }], (value) => validJob(value?.job)) : await request('/jobs', { targetId: selection.targetId, toolIds });
+      const value = desktop ? await nativeRequest('startScan', [{ toolIds, aiConsent, ...(phpUrl ? { phpUrl } : {}) }], (value) => validJob(value?.job)) : await request('/jobs', { targetId: selection.targetId, toolIds });
       job = value.job; message = '';
     } catch (error) { message = errorMessage(error, '검사를 시작하지 못했습니다. 다시 시도하세요.'); }
     finally { pending = false; draw(); schedulePoll(); }
+    await openDesktopResult();
   });
   $('execution-cancel').addEventListener('click', async () => {
     if ($('execution-cancel').disabled) return;
@@ -382,8 +444,14 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
       job = value.job; message = '';
     } catch (error) { message = errorMessage(error, '취소 요청에 실패했습니다. 실행 상태를 확인하세요.'); }
     finally { pending = false; draw(); schedulePoll(); }
+    await openDesktopResult();
   });
-  $('execution-refresh').addEventListener('click', async () => {
+  async function openDesktopResult() {
+    if (!desktop || !terminal(job) || !job.reportsReady || job.id === autoRefreshJobId || $('execution-refresh').disabled) return;
+    autoRefreshJobId = job.id;
+    await refreshResults();
+  }
+  async function refreshResults() {
     if ($('execution-refresh').disabled) return;
     pending = true; message = '검사 결과를 목록에 반영하는 중…'; draw();
     try {
@@ -394,11 +462,12 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
       lastRefresh = result.catalog.snapshot.createdAt;
       await applyCatalog(result.catalog, mapping.artifactId, generation);
       if (desktop && mapping.artifactId) openedJobId = job.id;
-      message = mapping.artifactId ? '새 스냅샷에 결과를 반영했습니다.' : '검사 결과가 현재 스냅샷에 없습니다. 목록 수집 한도를 확인하세요.';
+      message = mapping.artifactId ? (desktop ? '' : '새 스냅샷에 결과를 반영했습니다.') : '검사 결과가 현재 스냅샷에 없습니다. 목록 수집 한도를 확인하세요.';
       onModeChange({ enabled, desktop: Boolean(desktop), lastRefresh, generation });
     } catch (error) { message = errorMessage(error, '결과 반영에 실패했습니다. 기존 스냅샷을 유지합니다. 다시 시도하세요.'); }
     finally { pending = false; draw(); }
-  });
+  }
+  $('execution-refresh').addEventListener('click', refreshResults);
   async function discover() {
     if (!bearer) return;
     pending = true; message = '로컬 실행 권한을 확인하는 중…'; draw();
@@ -421,18 +490,26 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
   async function loadDesktopState(method) {
     revision++; window.clearTimeout(timer);
     pending = true;
-    message = method === 'chooseFolder' ? '폴더 선택을 기다리는 중…' : '도구 준비 상태를 확인하는 중…';
+    message = method === 'chooseFolder' ? '폴더 선택을 기다리는 중…'
+      : method === 'chooseConfig' ? '도구 설정 파일 선택을 기다리는 중…'
+        : method === 'chooseNode' ? 'Node.js 실행 파일 선택을 기다리는 중…'
+          : '도구 준비 상태를 확인하는 중…';
     draw();
     try {
       const value = await nativeRequest(method, [], validDesktopState);
-      if (method === 'chooseFolder' || value.folderLabel !== folderLabel) {
+      const newFolder = method === 'chooseFolder' || value.folderLabel !== folderLabel;
+      const defaultOSV = newFolder || !readyTool(readiness.find((tool) => tool.id === 'osv') ?? {});
+      if (newFolder) {
         selection.toolIds = [];
+        $('desktop-php-url').value = '';
         $('desktop-ai-consent').checked = false;
       }
       folderLabel = value.folderLabel;
+      configLabel = value.configLabel ?? null;
+      nodeConfigured = value.nodeConfigured === true;
       readiness = value.tools;
-      const toolIds = readiness.filter((tool) => readyTool(tool) && (tool.id === 'osv' || selection.toolIds.includes(tool.id))).map((tool) => tool.id);
-      if (toolIds.length !== selection.toolIds.length) $('desktop-ai-consent').checked = false;
+      const toolIds = readiness.filter((tool) => readyTool(tool) && ((defaultOSV && tool.id === 'osv') || selection.toolIds.includes(tool.id))).map((tool) => tool.id);
+      if (method !== 'getState' || toolIds.length !== selection.toolIds.length) $('desktop-ai-consent').checked = false;
       selection = { targetId: folderLabel ? 'native-selection' : '', toolIds };
       job = value.job;
       generation = value.generation;
@@ -440,8 +517,13 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
       message = '';
       onModeChange({ enabled, desktop: true, lastRefresh, generation });
     } catch (error) {
-      message = errorMessage(error, method === 'chooseFolder' ? '폴더를 선택하지 못했습니다. 다시 시도하세요.' : '도구 준비 상태를 확인하지 못했습니다. 다시 시도하세요.');
+      const fallback = method === 'chooseFolder' ? '폴더를 선택하지 못했습니다. 다시 시도하세요.'
+        : method === 'chooseConfig' ? desktopErrors.config_unavailable
+          : method === 'chooseNode' ? desktopErrors.node_unavailable
+            : '도구 준비 상태를 확인하지 못했습니다. 다시 시도하세요.';
+      message = errorMessage(error, fallback);
     } finally { pending = false; draw(); schedulePoll(); }
+    await openDesktopResult();
   }
   if (desktop) {
     $('desktop-scan').hidden = false;
@@ -449,6 +531,18 @@ export function initializeExecutionView({ document, window, getLocale, applyCata
     $('execution-panel').open = true;
     for (const id of ['execution-summary', 'execution-scope', 'execution-target-label', 'execution-toolset']) $(id).hidden = true;
     $('desktop-ai-consent').addEventListener('change', draw);
+    $('desktop-php-url').addEventListener('input', draw);
+    $('desktop-choose-config').addEventListener('click', () => {
+      if (typeof desktop.chooseConfig === 'function' && !$('desktop-choose-config').disabled) return loadDesktopState('chooseConfig');
+    });
+    $('desktop-choose-node').addEventListener('click', () => {
+      if (typeof desktop.chooseNode === 'function' && !$('desktop-choose-node').disabled) return loadDesktopState('chooseNode');
+    });
+    $('desktop-select-all').addEventListener('click', () => {
+      if ($('desktop-select-all').disabled) return;
+      $('desktop-optional').open = true;
+      chooseTools(readiness.filter(readyTool).map((tool) => tool.id));
+    });
     $('desktop-choose-folder').addEventListener('click', () => {
       if (!$('desktop-choose-folder').disabled) return loadDesktopState('chooseFolder');
     });

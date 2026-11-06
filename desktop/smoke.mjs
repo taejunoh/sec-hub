@@ -52,7 +52,7 @@ export async function smoke({ executable, out, timeoutMs = 120000 }) {
   if ((process.platform === 'darwin' && path.basename(executable) !== 'SecHub') || (process.platform === 'win32' && path.basename(executable) !== 'Sec Hub.exe')) throw new Error('Smoke must launch the actual named packaged executable');
   await mkdir(out, { recursive: true });
   const harness = await realpath(await mkdtemp(path.join(out, 'private-smoke-'))); await chmod(harness, 0o700);
-  const env = { ...process.env, SEC_HUB_DESKTOP_SMOKE_DIR: harness };
+  const env = { ...process.env, SEC_HUB_DESKTOP_SMOKE_DIR: harness, SEC_HUB_DESKTOP_SMOKE_NODE: await realpath(process.execPath) };
   for (const key of ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', 'NODE_PATH', 'ELECTRON_EXTRA_LAUNCH_ARGS']) delete env[key];
   // Open both logs before spawning. No stream error can strand a launched app.
   const stdout = await open(path.join(out, 'application-stdout.log'), 'wx', 0o600);

@@ -56,6 +56,10 @@ export async function loadConfig(file) {
   let value;
   try { value=JSON.parse(await readFile(resolve(file),'utf8')); }
   catch (error) { throw new Error(`Cannot read explicit config: ${error.message}`); }
+  return parseConfig(value);
+}
+
+export function parseConfig(value) {
   if (!value || Array.isArray(value) || typeof value!=='object' || Object.keys(value).some(key=>key!=='tools')) throw new Error('Config must contain only a tools object');
   if (!value.tools || Array.isArray(value.tools) || typeof value.tools!=='object') throw new Error('Config tools must be an object');
   const tools={};

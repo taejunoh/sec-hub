@@ -16,7 +16,7 @@ const now=()=>new Date().toISOString();
 const publicJob=job=>structuredClone(job.public);
 
 /** Dependencies belong to the trusted host, never to operator JSON or browser input. */
-export function createJobController({configuration,scan=runScan,report=writeReports,inspectGit}){
+export function createJobController({configuration,scan=runScan,report=writeReports,inspectGit,allowAnthropic=false}){
   const jobs=[];let active=null,refresh=null,closing=false,quarantined=false,closePromise;
   function admission(){if(quarantined)throw new ExecutionError('cleanup_unconfirmed');if(closing)throw new ExecutionError('execution_closing');if(active||refresh)throw new ExecutionError('execution_busy');}
   function find(id){const job=jobs.find(item=>item.public.id===id);if(!job)throw new ExecutionError('job_not_found');return job;}
@@ -31,6 +31,7 @@ export function createJobController({configuration,scan=runScan,report=writeRepo
       try{await recheckExecutionPaths(configuration,target);}catch{failure='execution_path_changed';throw new Error('Execution paths unavailable');}
       if(job.controller.signal.aborted)throw new Error('Aborted before scan');
       const run=await scan({target:target.path,out:join(configuration.runsRoot,view.id),tools:[...view.toolIds],config:target.config,ai:target.ai,url:target.url,timeoutMs:target.timeoutMs,signal:job.controller.signal,...(inspectGit===undefined?{}:{inspectGit}),
+        ...(target.nodeExecutable?{nodeExecutable:target.nodeExecutable}:{}),
         onCleanupUnconfirmed(){job.cleanupUnconfirmed=true;quarantined=true;abort(job,'cleanup_unconfirmed');},
         onProgress(event){
           if(!event||typeof event!=='object')return;
@@ -61,7 +62,7 @@ export function createJobController({configuration,scan=runScan,report=writeRepo
       admission();
       if(!request||typeof request!=='object'||Array.isArray(request)||Object.keys(request).some(key=>!['targetId','toolIds'].includes(key))||typeof request.targetId!=='string'||!Array.isArray(request.toolIds)||!request.toolIds.length||new Set(request.toolIds).size!==request.toolIds.length)throw new ExecutionError('invalid_request');
       const target=configuration.targets.find(item=>item.id===request.targetId);if(!target)throw new ExecutionError('target_not_found');
-      if(request.toolIds.some(id=>typeof id!=='string'||!target.toolIds.includes(id)||id==='anthropic'))throw new ExecutionError('invalid_request');
+      if(request.toolIds.some(id=>typeof id!=='string'||!target.toolIds.includes(id)||(id==='anthropic'&&!allowAnthropic)))throw new ExecutionError('invalid_request');
       if(jobs.length>=configuration.limits.maxJobs)throw new ExecutionError('job_limit');
       const startedAt=now(),job={controller:new AbortController(),cleanupUnconfirmed:false,public:{id:randomUUID(),targetId:target.id,targetLabel:target.label,toolIds:[...request.toolIds],state:'running',phase:'preparing',startedAt,updatedAt:startedAt,completedAt:null,progress:{completedCount:0,totalCount:request.toolIds.length,tools:request.toolIds.map(id=>({id,status:'pending'}))},runStatus:null,reportsReady:false,resultRunId:null,errorCode:null,abortReason:null}};
       active=job;jobs.push(job);

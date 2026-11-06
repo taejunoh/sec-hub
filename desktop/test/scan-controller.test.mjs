@@ -1,13 +1,14 @@
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { access, mkdtemp, mkdir, readFile, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runScan } from '../../src/runner.mjs';
 import { startDashboard } from '../../src/dashboard/server.mjs';
 import { createDesktopScanController } from '../../src/dashboard/desktop-execution.mjs';
+import { inspectDesktopTooling } from '../../src/dashboard/desktop-tooling.mjs';
 import { isTrustedSender } from '../app/policy.mjs';
 
 const sample = new URL('../app/sample/example/', import.meta.url);
@@ -86,6 +87,140 @@ test('AI jobs require consent from the renderer and the native confirmation, and
   assert.deepEqual(await host.openSetup('open-code-review', 'https://example.invalid'), { error: { code: 'setup_unavailable' } });
   assert.deepEqual(await host.openSetup('open-code-review', 'sign_in'), { ok: true });
   assert.deepEqual(opened, ['https://github.com/alibaba/open-code-review']);
+});
+
+test('one native config selection passes all seven adapters and the explicit endpoint to one job', async (t) => {
+  let chosen;
+  let received;
+  const started = new Promise((resolve) => { received = resolve; });
+  let consent;
+  const { host, root, target } = await fixture(t, {
+    pickConfig: async () => chosen,
+    pickNode: async () => process.execPath,
+    inspectTools: async ({ config } = {}) => Object.entries(config?.tools ?? {}).map(([id, tool]) => ({
+      id, ...tool, installation: 'installed',
+      ai: ['codex-security', 'open-code-review', 'cloudflare', 'anthropic'].includes(id),
+      ...(id === 'cloudflare' ? { nodeExecutable: process.execPath } : {}),
+    })),
+    confirmAI: async ({ toolIds }) => { consent = toolIds; return true; },
+    scan: async (value) => { received(value); return { id: 'seven', status: 'completed', directory: value.out }; },
+  });
+  const toolIds = ['osv', 'skillspector', 'codex-security', 'open-code-review', 'php2shell', 'cloudflare', 'anthropic'];
+  const workRoot = join(root, 'work');
+  const tools = Object.fromEntries(toolIds.map(id => [id, { command: process.execPath, args: [] }]));
+  tools['codex-security'].scanOptions = { auth: 'chatgpt' };
+  tools.cloudflare.agentOptions = { model: 'local-test-model', workRoot, skillRoot: root, revision: 'c'.repeat(40) };
+  tools.anthropic.agentOptions = { model: 'local-test-model', workRoot, skillRoot: root, revision: 'd'.repeat(40) };
+  chosen = join(root, 'trusted.json');
+  await writeFile(chosen, JSON.stringify({ tools }));
+  await host.chooseFolder();
+  const configured = await host.chooseConfig();
+  assert.equal(configured.configLabel, 'trusted.json');
+  assert.equal(configured.tools.filter(tool => tool.selectable).length, 7);
+  for (const secret of [root, target, process.execPath, 'local-test-model']) assert.ok(!JSON.stringify(configured).includes(secret));
+  assert.equal((await host.chooseNode()).nodeConfigured, true);
+
+  const request = { toolIds, aiConsent: true };
+  assert.deepEqual(await host.startScan(request), { error: { code: 'php_url_required' } });
+  for (const phpUrl of ['ftp://127.0.0.1/', 'https://user:secret@127.0.0.1/', 'https:/127.0.0.1', 'https://127.0.0.1/\nfoo', 'https://127.0.0.1/?secret=x', 'https://127.0.0.1/#fragment']) {
+    assert.deepEqual(await host.startScan({ ...request, phpUrl }), { error: { code: 'invalid_php_url' } });
+  }
+  const phpUrl = 'http://127.0.0.1:8080/';
+  const { job } = await host.startScan({ ...request, phpUrl });
+  assert.deepEqual(job.toolIds, toolIds);
+  const input = await started;
+  assert.deepEqual(consent, ['codex-security', 'open-code-review', 'cloudflare', 'anthropic']);
+  assert.equal(input.target, target);
+  assert.equal(input.url, phpUrl);
+  assert.equal(input.nodeExecutable, process.execPath);
+  assert.deepEqual(input.config.tools['codex-security'].scanOptions, { auth: 'chatgpt' });
+  assert.equal(input.config.tools.cloudflare.agentOptions.workRoot, workRoot);
+  assert.equal(input.config.tools.anthropic.agentOptions.model, 'local-test-model');
+});
+
+test('unsafe, oversized and unknown config files preserve the last trusted snapshot', async (t) => {
+  let chosen;
+  const { host, root, target } = await fixture(t, { pickConfig: async () => chosen });
+  await host.chooseFolder();
+  chosen = join(root, 'good.json');
+  await writeFile(chosen, '{"tools":{}}');
+  assert.equal((await host.chooseConfig()).configLabel, 'good.json');
+  for (const [filename, contents] of [
+    [join(target, 'in-project.json'), '{"tools":{}}'],
+    [join(root, 'big.json'), ' '.repeat(256 * 1024 + 1)],
+    [join(root, 'unknown.json'), '{"tools":{"arbitrary":{"command":"node"}}}'],
+  ]) {
+    chosen = filename;
+    await writeFile(chosen, contents);
+    assert.deepEqual(await host.chooseConfig(), { error: { code: 'config_unavailable' } });
+    assert.equal((await host.getState()).configLabel, 'good.json');
+  }
+  assert.deepEqual(await host.startScan({ toolIds: ['arbitrary'], aiConsent: true }), { error: { code: 'invalid_request' } });
+});
+
+test('the desktop inspector and real engine publish one result for two offline executable fixtures', async (t) => {
+  let chosen;
+  let resolveReports;
+  const reported = new Promise(resolve => { resolveReports = resolve; });
+  const baseTools = ['osv', 'php2shell'].map(id => ({ id, installation: 'missing', ai: false }));
+  const { host, root, runs, target } = await fixture(t, {
+    pickConfig: async () => chosen,
+    inspectTools: async settings => inspectDesktopTooling(baseTools, settings),
+    scan: runScan,
+    report: async run => resolveReports(run),
+  });
+  const phpUrl = 'http://127.0.0.1:1/explicit';
+  const checker = join(root, 'phpcheck.js');
+  const osv = join(root, 'osv.cjs');
+  await writeFile(checker, `
+    if (process.argv[2] === '--version') console.log('fixture 1.0');
+    else if (process.argv[2] === ${JSON.stringify(phpUrl)} && process.argv[3] === '--json') {
+      console.log(JSON.stringify({ patch_status: 'unknown', reason: 'Fixture header unavailable', php_version: null, exit_code: 3 }));
+      process.exitCode = 3;
+    } else process.exitCode = 2;
+  `);
+  await writeFile(osv, `
+    if (process.argv[2] === '--version') console.log('fixture 1.0');
+    else require('node:fs').writeFileSync(process.argv[process.argv.indexOf('--output-file') + 1], '{"results":[]}');
+  `);
+  chosen = join(root, 'tools.json');
+  await writeFile(chosen, JSON.stringify({ tools: {
+    osv: { command: process.execPath, args: [osv] },
+    php2shell: { command: process.execPath, args: [checker] },
+  } }));
+  await host.chooseFolder();
+  assert.equal((await host.chooseConfig()).tools.filter(tool => tool.selectable).length, 2);
+  // The original reviewed snapshot remains the authority for this session.
+  await writeFile(chosen, '{"tools":{}}');
+  const { job } = await host.startScan({ toolIds: ['osv', 'php2shell'], aiConsent: false, phpUrl });
+  assert.ok(job);
+  const run = await Promise.race([reported, new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error('No desktop report produced')), 10_000);
+    timer.unref();
+  })]);
+  assert.equal(run.status, 'completed');
+  assert.equal(run.directory, join(runs, job.id));
+  assert.equal(run.target.path, target);
+  assert.deepEqual(run.tools.filter(tool => tool.selected).map(tool => [tool.id, tool.status]), [['osv', 'completed'], ['php2shell', 'completed']]);
+  assert.equal(run.findings[0].location.url, phpUrl);
+});
+
+test('the desktop inspector blocks project executables and Windows native agent policies', async (t) => {
+  const { root, target } = await fixture(t);
+  const projectScanner = join(target, process.platform === 'win32' ? 'skillspector.exe' : 'skillspector');
+  await writeFile(projectScanner, 'fixture');
+  await chmod(projectScanner, 0o700);
+  const baseTools = ['skillspector', 'cloudflare', 'anthropic'].map(id => ({ id, installation: 'unknown' }));
+  const config = { tools: { skillspector: { command: projectScanner } } };
+  const settings = { targetPath: target, config, configPath: join(root, 'tools.json') };
+  const actual = await inspectDesktopTooling(baseTools, settings);
+  assert.equal(actual[0].command, undefined);
+  assert.equal(actual[0].unavailableReason, 'executable_missing');
+  const windows = await inspectDesktopTooling(baseTools, { ...settings, platform: 'win32' });
+  for (const tool of windows.slice(1)) {
+    assert.equal(tool.command, undefined);
+    assert.equal(tool.unavailableReason, 'platform_unsupported');
+  }
 });
 
 test('desktop report IDs resolve on the same origin only inside the authorized desktop session', async (t) => {

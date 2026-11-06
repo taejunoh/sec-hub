@@ -47,9 +47,24 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
         await bounded(changed, 3000, 'renderer_title_event_missing');
         return { document, native: window.getTitle() };
       };
-      const english = await changeTitle(`(() => { const select = document.querySelector('#language-select'); select.value = 'en'; select.dispatchEvent(new Event('change', { bubbles: true })); return { language: document.documentElement.lang, selection: select.value, title: document.title }; })()`);
-      const changed = await changeTitle(`document.title = 'SEC HUB / Smoke document title'`);
-      return { expected, afterLanguage: english.native, afterDocumentTitle: changed.native, englishDocument: english.document, preserved: english.native === expected && changed.native === expected && english.document.language === 'en' && english.document.selection === 'en' && english.document.title === 'SEC HUB / Developer Workbench' };
+      const english = await changeTitle(`(() => {
+        const select = document.querySelector('#language-select');
+        select.value = 'en';
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        return {
+          language: document.documentElement.lang,
+          selection: select.value,
+          title: document.title,
+          heading: document.querySelector('.brand h1')?.textContent,
+          scanIntro: document.querySelector('.scan-console-header > p')?.textContent,
+        };
+      })()`);
+      const changed = await changeTitle(`document.title = 'Untrusted renderer title'`);
+      const { language, selection, title, heading, scanIntro } = english.document;
+      const preserved = english.native === expected && changed.native === expected && language === 'en' && selection === 'en'
+        && title === 'Security Scan Hub / Developer Workbench' && heading === 'Security Scan Hub'
+        && scanIntro === 'Run up to seven configured security tools in one scan. Review the results in one place.';
+      return { expected, afterLanguage: english.native, afterDocumentTitle: changed.native, englishDocument: english.document, preserved };
     };
     let renderer;
     await bounded((async () => {
@@ -68,13 +83,13 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     summary.checks.securityPreferences = preferences.sandbox === true && preferences.contextIsolation === true
       && preferences.nodeIntegration === false && preferences.webSecurity === true
       && !rendererPrivileges.nodeExposed && !rendererPrivileges.ipcExposed
-      && rendererPrivileges.bridge.join(',') === 'cancelScan,chooseFolder,getJob,getState,openSetup,refreshResults,startScan';
+      && rendererPrivileges.bridge.join(',') === 'cancelScan,chooseConfig,chooseFolder,chooseNode,getJob,getState,openSetup,refreshResults,startScan';
     const count = renderer.catalog.artifacts.filter((item) => item.state === 'ready').length;
     summary.renderer = { domContentLoaded: domLoaded(), catalogCount: count };
     summary.checks.rendererLoad = domLoaded() && ['interactive', 'complete'].includes(renderer.readyState) && renderer.rows > 0;
     summary.checks.catalog = count > 0 && renderer.executionStatus === 404;
     summary.checks.executionUnavailable = renderer.executionStatus === 404;
-    summary.nativeTitles = { example: await inspectNativeTitle('Sec Hub — Example data · No new scan') };
+    summary.nativeTitles = { example: await inspectNativeTitle('Security Scan Hub — Example data · No new scan') };
     summary.checks.rendererLoad &&= summary.nativeTitles.example.preserved;
     const initial = controller.current.url;
     const selected = path.join(directory, 'controlled-results');
@@ -84,7 +99,7 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     const switched = await actions.openSavedResults();
     const after = await inspectRenderer();
     summary.checks.folderSwitch = switched === true && controller.current.url !== initial && controller.current.example === false && after.catalog.artifacts.some((item) => item.state === 'ready') && after.executionStatus === 404 && await portClosed(initial);
-    summary.nativeTitles.savedResults = await inspectNativeTitle('Sec Hub — Saved results');
+    summary.nativeTitles.savedResults = await inspectNativeTitle('Security Scan Hub — Saved results');
     summary.checks.folderSwitch &&= summary.nativeTitles.savedResults.preserved;
     const project = path.join(directory, 'controlled-project');
     await fs.mkdir(project, { mode: 0o700 });
@@ -96,41 +111,72 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
       },
     }), { mode: 0o600 });
     const invoke = (source, gesture = false) => window.webContents.executeJavaScript(source, gesture);
+    const waitFor = async (read, ms, code) => {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        const value = await read();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      throw Error(code);
+    };
+    const click = (id) => invoke(`document.getElementById(${JSON.stringify(id)}).click()`, true);
     selectFolder(project);
     window.focus();
     const initialState = await invoke('window.secHubDesktop.getState()');
     const withoutGesture = await invoke('window.secHubDesktop.chooseFolder()');
-    const chosen = await invoke('window.secHubDesktop.chooseFolder()', true);
+    await waitFor(() => invoke("!document.getElementById('desktop-choose-folder').disabled"), 5000, 'scan_controls_unavailable');
+    await click('desktop-choose-folder');
+    const chosen = await waitFor(() => invoke("document.getElementById('desktop-folder').textContent === 'controlled-project'"), 5000, 'project_selection_failed');
     const injected = await invoke("window.secHubDesktop.startScan({ toolIds: ['osv'], aiConsent: false, path: '/arbitrary' })", true);
+    const phpUrl = 'http://127.0.0.1:8080/';
+    const checker = path.join(directory, 'phpcheck.js');
+    const config = path.join(directory, 'trusted-tools.json');
+    const node = process.env.SEC_HUB_DESKTOP_SMOKE_NODE;
+    if (!path.isAbsolute(node ?? '')) throw Error('fixture_node_missing');
+    // Only the adapter transport is under test here. The fixture makes no HTTP request.
+    await fs.writeFile(checker, `if (process.argv[2] === '--version') console.log('PHP checker fixture 1.0.0');
+      else if (process.argv[2] === ${JSON.stringify(phpUrl)} && process.argv[3] === '--json') {
+        console.log(JSON.stringify({patch_status:'potentially_vulnerable',php_version:'8.4.1',reason:'Controlled smoke finding',exit_code:1}));
+        process.exitCode = 1;
+      } else process.exitCode = 2;`, { mode: 0o600 });
+    await fs.writeFile(config, JSON.stringify({ tools: { php2shell: { command: node, args: [checker] } } }), { mode: 0o600 });
+    selectFolder(config);
+    await invoke("document.getElementById('desktop-config').open = true");
+    await click('desktop-choose-config');
+    const imported = await waitFor(() => invoke("document.getElementById('desktop-config-label').textContent === 'trusted-tools.json'"), 5000, 'config_import_failed');
     summary.nativeScan = {
       installed: initialState.tools?.some((tool) => tool.id === 'osv' && tool.installation === 'installed' && tool.selectable),
       withoutGesture: withoutGesture.error?.code,
-      chosen: chosen.folderLabel === 'controlled-project',
-      selectionError: chosen.error?.code,
+      chosen,
       injected: injected.error?.code,
+      configImported: imported,
     };
     if (!summary.nativeScan.installed || summary.nativeScan.withoutGesture !== 'forbidden'
-      || !summary.nativeScan.chosen || summary.nativeScan.injected !== 'invalid_request') throw Error('native_scan_admission_failed');
-    const start = await invoke("window.secHubDesktop.startScan({ toolIds: ['osv'], aiConsent: false })", true);
-    if (!start.job) {
-      summary.nativeScan.startError = start.error?.code;
-      throw Error('native_scan_start_failed');
-    }
-    const job = await bounded((async () => {
-      while (true) {
-        const { job } = await invoke('window.secHubDesktop.getJob()');
-        if (job && ['completed', 'failed', 'cancelled'].includes(job.state)) return job;
-        await new Promise((resolve) => setTimeout(resolve, 150));
-      }
-    })(), 45_000, 'native_scan_deadline');
-    const refresh = await invoke('window.secHubDesktop.refreshResults()');
-    const artifactId = refresh.results?.find((item) => item.jobId === job.id)?.artifactId;
+      || !summary.nativeScan.chosen || summary.nativeScan.injected !== 'invalid_request' || !summary.nativeScan.configImported) throw Error('native_scan_admission_failed');
+    await click('desktop-select-all');
+    await invoke(`(() => {
+      const input = document.getElementById('desktop-php-url');
+      input.value = ${JSON.stringify(phpUrl)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await click('execution-start');
+    const job = await waitFor(async () => {
+      const { job } = await invoke('window.secHubDesktop.getJob()');
+      return job && ['completed', 'failed', 'cancelled'].includes(job.state) && job;
+    }, 45_000, 'native_scan_deadline');
+    const artifactId = await waitFor(() => invoke(`(async () => {
+      const catalog = await (await fetch('/api/catalog')).json();
+      const item = catalog.artifacts.find(({ summary }) => summary?.runId === ${JSON.stringify(job.resultRunId)});
+      if (document.getElementById('detail-content').textContent.includes('Advertised PHP version may be vulnerable')) return item?.id;
+    })()`), 7000, 'combined_report_not_opened');
     const artifact = artifactId && await invoke(`fetch('/api/artifacts/${artifactId}').then((response) => response.json())`);
     const browserStatus = artifactId && (await fetch(new URL(`api/artifacts/${artifactId}`, controller.current.url))).status;
-    const tool = artifact?.run?.tools?.find((entry) => entry.id === 'osv');
-    summary.nativeScan = { ...summary.nativeScan, state: job.state, errorCode: job.errorCode, runStatus: job.runStatus, reportsReady: job.reportsReady, artifactId, browserStatus, toolStatus: tool?.status };
+    const tools = Object.fromEntries((artifact?.run?.tools ?? []).filter(({ selected }) => selected).map(({ id, status }) => [id, status]));
+    const combinedFinding = artifact?.run?.findings?.some((finding) => finding.toolId === 'php2shell' && finding.ruleId === 'php2shell-header-version');
+    summary.nativeScan = { ...summary.nativeScan, state: job.state, errorCode: job.errorCode, runStatus: job.runStatus, reportsReady: job.reportsReady, artifactId, browserStatus, tools, combinedFinding };
     summary.checks.nativeScan = job.state === 'completed' && job.runStatus === 'completed' && job.reportsReady
-      && tool?.status === 'completed' && browserStatus === 404;
+      && tools.osv === 'completed' && tools.php2shell === 'completed' && combinedFinding && browserStatus === 404;
     const secondEvent = secondInstance();
     secondary = spawn(process.execPath, ['--sec-hub-smoke', '--sec-hub-smoke-secondary'], { env: process.env, stdio: 'ignore', windowsHide: true });
     secondaryExit = new Promise((resolve, reject) => {

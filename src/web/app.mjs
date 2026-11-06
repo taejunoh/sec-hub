@@ -1,4 +1,4 @@
-import { initializeExecutionView } from './execution-view.mjs';
+import { desktopToolName, initializeExecutionView } from './execution-view.mjs';
 import { translate } from './i18n.mjs';
 import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, findingPackage, findingSeverity, gateLabel, pageItems, runStatusLabel, sortFindingsBySeverity, toolStatusLabel, verificationLabel, transitionFindingView } from './view-model.mjs';
 
@@ -58,7 +58,7 @@ let filteredFindings = [];
 const severityKeys = { critical: '치명적', high: '높음', medium: '보통', low: '낮음', info: '정보', unknown: '알 수 없음' };
 const severityName = (severity) => t(severityKeys[severity]);
 const packageLabel = ({ name, version }) => name && (version ? `${name} ${version}` : name);
-const toolName = (id) => id === 'osv' ? 'OSV Scanner' : id;
+const toolName = desktopToolName;
 const projectName = (path) => typeof path === 'string' && path.split(/[\\/]/).filter(Boolean).at(-1) || t('프로젝트 검사 결과');
 function severityBadge(finding) {
   const severity = findingSeverity(finding);
@@ -205,8 +205,8 @@ function updateSnapshotChrome() {
 function updateExecutionMode(mode) {
   executionMode = mode;
   $('execution-seal').dataset.i18n = mode.desktop ? '데스크톱 검사' : mode.enabled ? '로컬 실행 가능' : '읽기 전용';
-  $('refresh-note').dataset.i18n = mode.desktop ? '검사가 끝나면 결과를 열어 저장된 기록을 살펴보세요.' : mode.enabled ? '검사 후 결과 반영을 누르면 새 파일을 읽습니다.' : '새 파일을 반영하려면 서버를 다시 시작하세요.';
-  $('snapshot-note').dataset.i18n = mode.enabled ? '명시적 결과 반영 / 저장된 결과는 안전 판정이 아닙니다' : '고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다';
+  $('refresh-note').dataset.i18n = mode.desktop ? '검사 보고서가 준비되면 자동으로 엽니다.' : mode.enabled ? '검사 후 결과 반영을 누르면 새 파일을 읽습니다.' : '새 파일을 반영하려면 서버를 다시 시작하세요.';
+  $('snapshot-note').dataset.i18n = mode.desktop ? '자동 결과 반영 / 저장된 결과는 안전 판정이 아닙니다' : mode.enabled ? '명시적 결과 반영 / 저장된 결과는 안전 판정이 아닙니다' : '고정 스냅샷 / 브라우저 새로고침은 디스크를 다시 읽지 않습니다';
   for (const id of ['execution-seal', 'refresh-note', 'snapshot-note']) $(id).textContent = t($(id).dataset.i18n);
   updateSnapshotChrome();
 }
@@ -504,7 +504,9 @@ function drawFindingRows() {
 function drawFindings(parent, run) {
   const section = el('section', 'block');
   section.id = 'finding-section';
-  const tools = [...new Set((run.findings ?? []).map((x) => x.toolId).filter(Boolean))].sort();
+  const findingTools = (run.findings ?? []).map((finding) => finding.toolId);
+  const selectedTools = executionMode.desktop ? (run.tools ?? []).filter((tool) => tool.selected !== false).map((tool) => tool.id) : [];
+  const tools = [...new Set([...findingTools, ...selectedTools].filter(Boolean))].sort();
   const controls = el('div', 'finding-controls');
   const searchLabel = el('label', 'filters-label', t('검색'));
   const search = document.createElement('input');
@@ -522,7 +524,7 @@ function drawFindings(parent, run) {
   const toolLabel = el('label', 'filters-label', t('도구 ID'));
   const toolSelect = document.createElement('select'); toolSelect.setAttribute('aria-label', t('도구 ID 필터'));
   const all = document.createElement('option'); all.value = 'all'; all.textContent = t('전체'); toolSelect.append(all);
-  for (const id of tools) { const option = document.createElement('option'); option.value = id; option.textContent = id; toolSelect.append(option); }
+  for (const id of tools) { const option = document.createElement('option'); option.value = id; option.textContent = toolName(id); toolSelect.append(option); }
   toolSelect.value = findingView.tool; toolSelect.id = 'finding-tool';
   toolLabel.append(toolSelect);
   const reset = el('button', 'quiet-button filters-reset', t('결과 필터 초기화'));
@@ -589,11 +591,12 @@ function drawRun(parent, run, artifact) {
   const runSummary = el('div', 'run-summary');
   const heading = el('div', 'section-heading');
   heading.append(el('h3', '', projectName(run.target?.path)), safeStatusStamp(run.status));
-  const usedTools = (run.tools ?? []).filter((tool) => tool.selected !== false && tool.status !== 'skipped');
+  const selectedTools = (run.tools ?? []).filter((tool) => tool.selected !== false);
+  const usedTools = selectedTools.filter((tool) => tool.status !== 'skipped');
   const findings = Array.isArray(run.findings) ? run.findings : [];
   const total = t('발견 항목 {v0}건', { v0: findings.length });
   const names = usedTools.map((tool) => toolName(tool.id)).filter(Boolean).join(', ');
-  runSummary.append(heading, el('p', '', names ? `${names} · ${total}` : total));
+  runSummary.append(heading, el('p', '', names && !executionMode.desktop ? `${names} · ${total}` : total));
   overview.append(runSummary);
   const counts = new Map();
   for (const finding of findings) {
@@ -610,6 +613,16 @@ function drawRun(parent, run, artifact) {
   }
   if (counts.size) overview.append(severitySummary);
   top.append(overview);
+  if (executionMode.desktop && selectedTools.length) {
+    const coverage = el('ul', 'run-tool-coverage');
+    coverage.setAttribute('aria-label', t('도구 실행 범위'));
+    for (const tool of selectedTools) {
+      const item = el('li', 'tag', `${toolName(tool.id)} · ${toolStatusLabel(tool.status, locale)}`);
+      if (['failed', 'missing', 'skipped'].includes(tool.status)) item.classList.add('alert');
+      coverage.append(item);
+    }
+    top.append(coverage);
+  }
   const metadata = el('details', 'run-metadata');
   metadata.append(el('summary', '', t('검사 세부 정보')));
   const pairs = [
@@ -838,7 +851,7 @@ async function compareSelected() {
 
 function applyLanguage() {
   document.documentElement.lang = locale;
-  document.title = t('SEC HUB / 개발자 워크벤치');
+  document.title = t('Security Scan Hub / 개발자 워크벤치');
   for (const [id, { key, values }] of chromeMessages) $(id).textContent = t(key, typeof values === 'function' ? values() : values);
   for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
   for (const node of document.querySelectorAll('[data-i18n-placeholder]')) node.placeholder = t(node.dataset.i18nPlaceholder);

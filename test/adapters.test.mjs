@@ -45,6 +45,31 @@ test('native argv preserves executable prefixes and hostile target as a single a
   assert.equal(getAdapter('php2shell').build({ ...ctx, config: { tools: { php2shell: { command: 'node', args: ['/checker/phpcheck.js'] } } } }).args[0], '/checker/phpcheck.js');
 });
 
+test('desktop-selected Node runtime launches wrappers while preserving the configured tools', () => {
+  const nodeExecutable = join(tmpdir(), 'trusted node', 'node');
+  const config = {
+    tools: {
+      'codex-security': { command: '/tools/codex-security', args: [] },
+      cloudflare: {
+        command: '/tools/codex', args: [],
+        agentOptions: { skillRoot: '/skills/cloudflare', workRoot: '/private/work', revision: 'c1c8a8c1471069fb0e188eeaff69b8e8db6564a8', model: 'fixture' },
+      },
+      anthropic: {
+        command: '/tools/claude', args: [],
+        agentOptions: { skillRoot: '/skills/anthropic', workRoot: '/private/work', revision: 'd3bea6b5793b5f3d59a75ebe69a58efa88383145', model: 'fixture' },
+      },
+    },
+  };
+  const ctx = { target: '/repo', artifactDir: '/artifacts', config };
+  for (const [id, { command }] of Object.entries(config.tools)) {
+    const adapter = getAdapter(id);
+    assert.equal(adapter.build(ctx).command, process.execPath);
+    const spec = adapter.build({ ...ctx, nodeExecutable });
+    assert.equal(spec.command, nodeExecutable);
+    assert.equal(JSON.parse(spec.args[1]).command, command);
+  }
+});
+
 test('OSV maps package advisories, aliases, severity and native evidence', async () => {
   const out = await parse('osv', await fixture('osv-positive'), 1);
   assert.equal(out.length, 1);
