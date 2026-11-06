@@ -60,7 +60,7 @@ export async function verifiedOSV(resources) {
   let expected = pin;
   let handle;
   try {
-    if (target === 'darwin-arm64') {
+    if (process.platform === 'darwin') {
       // macOS may report the enclosing app through aliases such as /var.
       // Resolve only the app root, preserving the checks on internal paths.
       const contents = join(await realpath(dirname(dirname(resources))), 'Contents');

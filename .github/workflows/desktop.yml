@@ -2,6 +2,11 @@ name: Desktop viewer prerelease
 
 on:
   workflow_dispatch:
+    inputs:
+      intel_release_sha256:
+        description: SHA-256 of a notarized Intel ZIP attached to the matching draft release
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -12,8 +17,17 @@ concurrency:
 
 jobs:
   macos:
-    name: Saved-results viewer / macOS arm64
-    runs-on: macos-latest
+    if: inputs.intel_release_sha256 == ''
+    name: Desktop / macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -22,18 +36,18 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
-          architecture: arm64
+          architecture: ${{ matrix.arch }}
           package-manager-cache: false
       - name: Verify native target and desktop units
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/sec-hub-desktop-evidence"
-          node -e "if(process.platform!=='darwin'||process.arch!=='arm64')process.exit(1)"
+          node -e "if(process.platform!=='darwin'||process.arch!==process.argv[1])process.exit(1)" "${{ matrix.arch }}"
           node --test desktop/test/*.test.mjs 2>&1 | tee "$RUNNER_TEMP/sec-hub-desktop-evidence/unit-tests.log"
       - name: Build clean source with verified official runtime
         shell: bash
         run: |
-          node desktop/build.mjs --target darwin-arm64 --out "$RUNNER_TEMP/sec-hub-desktop-build" --cache "$RUNNER_TEMP/sec-hub-electron-cache" 2>&1 | tee "$RUNNER_TEMP/sec-hub-desktop-evidence/build.log"
+          node desktop/build.mjs --target "darwin-${{ matrix.arch }}" --out "$RUNNER_TEMP/sec-hub-desktop-build" --cache "$RUNNER_TEMP/sec-hub-electron-cache" 2>&1 | tee "$RUNNER_TEMP/sec-hub-desktop-evidence/build.log"
       - name: Run actual packaged application and observe shutdown
         shell: bash
         run: |
@@ -42,7 +56,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-${{ github.sha }}-darwin-arm64
+          name: desktop-${{ github.sha }}-darwin-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/sec-hub-desktop-build/*.zip
             ${{ runner.temp }}/sec-hub-desktop-build/*.manifest.json
@@ -55,6 +69,7 @@ jobs:
           retention-days: 7
 
   windows:
+    if: inputs.intel_release_sha256 == ''
     name: Saved-results viewer / Windows x64
     runs-on: windows-latest
     timeout-minutes: 20
@@ -143,5 +158,58 @@ jobs:
             ${{ runner.temp }}/sec-hub-desktop-build/SHA256SUMS.txt
             ${{ runner.temp }}/sec-hub-desktop-build/archive-verification.json
             ${{ runner.temp }}/sec-hub-desktop-evidence
+          if-no-files-found: error
+          retention-days: 7
+
+  intel-release-smoke:
+    if: github.ref == 'refs/heads/main' && inputs.intel_release_sha256 != ''
+    name: Notarized release ZIP / Intel macOS
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    permissions:
+      contents: write # GitHub requires push access to download draft release assets.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          architecture: x64
+          package-manager-cache: false
+      - name: Download the exact draft release asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: ${{ inputs.intel_release_sha256 }}
+        run: |
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          version="$(node -p "require('./desktop/app/package.json').version")"
+          tag="desktop-v$version"
+          archive="sec-hub-desktop-$version-darwin-x64-notarized-prerelease.zip"
+          test "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish --jq 'select(.isDraft) | .targetCommitish')" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/intel-release"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$archive" --dir "$RUNNER_TEMP/intel-release"
+          cd "$RUNNER_TEMP/intel-release"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$archive" | shasum -a 256 -c -
+      - name: Extract, verify Gatekeeper and run the Intel app
+        shell: bash
+        run: |
+          node -e "if(process.platform!=='darwin'||process.arch!=='x64')process.exit(1)"
+          version="$(node -p "require('./desktop/app/package.json').version")"
+          archive="$RUNNER_TEMP/intel-release/sec-hub-desktop-$version-darwin-x64-notarized-prerelease.zip"
+          /usr/bin/ditto -x -k "$archive" "$RUNNER_TEMP/intel-release/extracted"
+          app="$RUNNER_TEMP/intel-release/extracted/Sec Hub.app"
+          test "$(/usr/bin/lipo -archs "$app/Contents/MacOS/SecHub")" = x86_64
+          /usr/bin/codesign --verify --deep --strict "$app"
+          /usr/bin/xcrun stapler validate "$app"
+          /usr/sbin/spctl --assess --type execute --verbose=4 "$app" 2>&1 | grep -F 'source=Notarized Developer ID'
+          node desktop/smoke.mjs --executable "$app" --out "$RUNNER_TEMP/intel-release-evidence"
+      - name: Preserve Intel execution evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: intel-notarized-smoke-${{ github.sha }}
+          path: "$RUNNER_TEMP/intel-release-evidence"
           if-no-files-found: error
           retention-days: 7

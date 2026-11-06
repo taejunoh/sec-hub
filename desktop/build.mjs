@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appFiles = ['package.json', 'main.cjs', 'controller.mjs', 'policy.mjs', 'preload.cjs', 'tools.mjs', 'osv-lock.json', 'smoke.mjs'];
 const licenseFiles = ['LICENSE', 'LICENSES.chromium.html'];
-const supported = new Set(['darwin-arm64', 'win32-x64']);
+const macArchitectures = new Map([['darwin-arm64', 'arm64'], ['darwin-x64', 'x86_64']]);
+const supported = new Set([...macArchitectures.keys(), 'win32-x64']);
+const hostTarget = process.platform + '-' + process.arch;
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const slash = value => value.split(path.sep).join('/');
 const inside = (root, value) => { const rel = path.relative(root, value); return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)); };
@@ -47,8 +49,8 @@ export async function validatePaths({ repository: root, out, cache }) {
 }
 export function platformLayout(base, target) {
   if (!supported.has(target)) throw new Error(`Unsupported desktop target: ${target}`);
-  const application = path.join(base, target === 'darwin-arm64' ? 'Sec Hub.app' : 'Sec Hub');
-  return target === 'darwin-arm64'
+  const application = path.join(base, macArchitectures.has(target) ? 'Sec Hub.app' : 'Sec Hub');
+  return macArchitectures.has(target)
     ? { application, executable: path.join(application, 'Contents/MacOS/SecHub'), resources: path.join(application, 'Contents/Resources') }
     : { application, executable: path.join(application, 'Sec Hub.exe'), resources: path.join(application, 'resources') };
 }
@@ -105,8 +107,15 @@ export async function stagePayload({ repository: root, resources }) {
 export async function validateRuntime(root, target) {
   if (!supported.has(target)) throw new Error(`Unsupported desktop target: ${target}`);
   for (const name of licenseFiles) await regularFile(path.join(root, name));
-  const executable = target === 'darwin-arm64' ? 'Electron.app/Contents/MacOS/Electron' : 'electron.exe';
-  await regularFile(path.join(root, executable));
+  const executable = macArchitectures.has(target) ? 'Electron.app/Contents/MacOS/Electron' : 'electron.exe';
+  const filename = path.join(root, executable);
+  await regularFile(filename);
+  if (macArchitectures.has(target)) await verifyMacArchitecture(filename, target);
+}
+async function verifyMacArchitecture(filename, target) {
+  const { stdout } = await run('/usr/bin/lipo', ['-archs', filename]);
+  const expected = macArchitectures.get(target);
+  if (stdout.trim() !== expected) throw new Error('Unexpected Mach-O architecture in ' + path.basename(filename) + ': expected ' + expected + ', found ' + stdout.trim());
 }
 async function run(command, args, { cwd = repository, quiet = false } = {}) {
   return new Promise((resolve, reject) => {
@@ -152,9 +161,12 @@ async function extractArchive(archive, destination) {
 async function packMac(application, archive) {
   await run('/usr/bin/ditto', ['-c', '-k', '--rsrc', '--extattr', '--acl', '--qtn', '--sequesterRsrc', '--keepParent', application, archive]);
 }
-export async function packAndVerify({ application, archive, target, expectedFiles, developerId, notarized = false }) {
-  if (`${process.platform}-${process.arch}` !== target) throw new Error('Verify archives on the native target');
-  if (target === 'darwin-arm64') await packMac(application, archive);
+function canBuildIntelOnAppleSilicon(target, allowMacCrossArch) {
+  return allowMacCrossArch === true && hostTarget === 'darwin-arm64' && target === 'darwin-x64';
+}
+export async function packAndVerify({ application, archive, target, expectedFiles, developerId, notarized = false, allowMacCrossArch = false }) {
+  if (hostTarget !== target && !canBuildIntelOnAppleSilicon(target, allowMacCrossArch)) throw new Error('Verify archives on the native target');
+  if (macArchitectures.has(target)) await packMac(application, archive);
   else await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Compress-Archive -LiteralPath ${psLiteral(application)} -DestinationPath ${psLiteral(archive)} -CompressionLevel Optimal`]);
   const directory = await nativeTemporary('sec-hub-desktop-roundtrip-');
   try {
@@ -164,7 +176,7 @@ export async function packAndVerify({ application, archive, target, expectedFile
     if (json(files) !== json(expectedFiles)) throw new Error('Extracted archive inventory differs from the final signed file inventory');
     // This is verification only: never strip metadata or re-sign extracted bytes.
     let signatureLog = '';
-    if (target === 'darwin-arm64') {
+    if (macArchitectures.has(target)) {
       const result = await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', layout.application]);
       signatureLog = result.stdout + result.stderr;
     }
@@ -175,7 +187,7 @@ export async function packAndVerify({ application, archive, target, expectedFile
       if (!/source=Notarized Developer ID/.test(assessment.stdout + assessment.stderr)) throw new Error('Gatekeeper did not identify a notarized Developer ID app');
       signatureLog += ticket.stdout + ticket.stderr + assessment.stdout + assessment.stderr;
     }
-    const verification = { status: 'passed', nativeTemporaryExtraction: true, postExtractionMutations: false, inventoryFiles: files.length, inventorySha256: createHash('sha256').update(json(files)).digest('hex'), macStrictSignature: target === 'darwin-arm64', ...(developerId && { macDeveloperId: true, macStapledTicket: notarized, macGatekeeper: notarized }), authoritativeDeliverable: 'ZIP verified after fresh extraction in native temporary storage; out/package is a convenience copy derived from that ZIP and may acquire local filesystem metadata' };
+    const verification = { status: 'passed', nativeTemporaryExtraction: true, postExtractionMutations: false, inventoryFiles: files.length, inventorySha256: createHash('sha256').update(json(files)).digest('hex'), macStrictSignature: macArchitectures.has(target), ...(developerId && { macDeveloperId: true, macStapledTicket: notarized, macGatekeeper: notarized }), authoritativeDeliverable: 'ZIP verified after fresh extraction in native temporary storage; out/package is a convenience copy derived from that ZIP and may acquire local filesystem metadata' };
     return { directory, application: layout.application, files, verification, signatureLog };
   } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
 }
@@ -222,6 +234,7 @@ async function stageOSV(resources, cache, target) {
     await copyFile(source, destination);
     await chmod(destination, pin === binary ? 0o755 : 0o644);
     await verifyArchive(destination, pin);
+    if (pin === binary && macArchitectures.has(target)) await verifyMacArchitecture(destination, target);
   }
   return { version: lock.version, release: lock.release, checksums: lock.checksums, binary, license: lock.license };
 }
@@ -402,19 +415,21 @@ async function notarizeMac(application, stage, out, profile) {
   return { id, status };
 }
 
-export async function build({ target, out, cache, allowDirty = false, macSignIdentity, notaryProfile }) {
+export async function build({ target, out, cache, allowDirty = false, macSignIdentity, notaryProfile, allowMacCrossArch = false }) {
   if (!supported.has(target)) throw new Error(`Unsupported desktop target: ${target}`);
-  if (target !== 'darwin-arm64' && (macSignIdentity !== undefined || notaryProfile !== undefined)) throw new Error('Developer ID signing and notarization options apply only to macOS');
+  if (!macArchitectures.has(target) && (macSignIdentity !== undefined || notaryProfile !== undefined)) throw new Error('Developer ID signing and notarization options apply only to macOS');
   if (macSignIdentity !== undefined && !developerIdName.test(macSignIdentity) && !/^[a-f0-9]{40}$/i.test(macSignIdentity)) throw new Error('Use a Developer ID Application name or SHA-1 fingerprint');
   if (notaryProfile !== undefined && (!macSignIdentity || typeof notaryProfile !== 'string' || !notaryProfile.trim())) throw new Error('Notarization requires a Developer ID Application identity and a nonempty Keychain profile');
-  if (`${process.platform}-${process.arch}` !== target) throw new Error('Build on the native target OS and architecture');
+  const crossArch = canBuildIntelOnAppleSilicon(target, allowMacCrossArch);
+  if (allowMacCrossArch && !crossArch) throw new Error('--allow-mac-cross-arch applies only when building Intel macOS packages on Apple silicon');
+  if (hostTarget !== target && !crossArch) throw new Error('Build on the native target OS and architecture');
   await validatePaths({ repository, out, cache });
   const source = await gitState();
   if (source.dirty && !allowDirty) throw new Error('Final packages require a clean Git checkout; --allow-dirty labels a development package');
-  const buildIn = directory => buildPackage({ target, out: directory, cache, allowDirty, macSignIdentity, notaryProfile, source });
+  const buildIn = directory => buildPackage({ target, out: directory, cache, allowDirty, macSignIdentity, notaryProfile, allowMacCrossArch, source });
   let result;
   let destination = out;
-  if (target === 'darwin-arm64') {
+  if (macArchitectures.has(target)) {
     ({ result, destination } = await withMacBuildOutput(out, buildIn));
   } else {
     await mkdir(out, { recursive: true });
@@ -424,7 +439,7 @@ export async function build({ target, out, cache, allowDirty = false, macSignIde
   return { ...result, archive: path.join(destination, result.archive), manifest: path.join(destination, result.manifest), executable: path.join(destination, result.executable), application: path.join(destination, result.application) };
 }
 
-async function buildPackage({ target, out, cache, allowDirty, macSignIdentity, notaryProfile, source }) {
+async function buildPackage({ target, out, cache, allowDirty, macSignIdentity, notaryProfile, allowMacCrossArch, source }) {
   const developerId = macSignIdentity ? await macDeveloperIdentity(macSignIdentity) : undefined;
   if (notaryProfile) await run('/usr/bin/xcrun', ['notarytool', 'history', '--keychain-profile', notaryProfile, '--output-format', 'json']);
   const lock = JSON.parse(await readFile(path.join(repository, 'desktop/runtime-lock.json'), 'utf8'));
@@ -437,11 +452,11 @@ async function buildPackage({ target, out, cache, allowDirty, macSignIdentity, n
   try {
     await validateRuntime(extracted, target);
     const layout = platformLayout(stage, target);
-    if (target === 'darwin-arm64') await run('/usr/bin/ditto', [path.join(extracted, 'Electron.app'), layout.application]);
+    if (macArchitectures.has(target)) await run('/usr/bin/ditto', [path.join(extracted, 'Electron.app'), layout.application]);
     else await cp(extracted, layout.application, { recursive: true, dereference: false });
     const appVersion = JSON.parse(await readFile(path.join(repository, 'desktop/app/package.json'), 'utf8')).version;
     if (!/^\d+\.\d+\.\d+$/.test(appVersion)) throw new Error('Unexpected desktop version');
-    if (target === 'darwin-arm64') await rebrandMac(layout.application, appVersion);
+    if (macArchitectures.has(target)) await rebrandMac(layout.application, appVersion);
     else {
       await rename(path.join(layout.application, 'electron.exe'), layout.executable);
       try { await rename(path.join(layout.application, 'electron_wer.dll'), path.join(layout.application, 'Sec Hub_wer.dll')); }
@@ -461,7 +476,7 @@ async function buildPackage({ target, out, cache, allowDirty, macSignIdentity, n
       licenses.push({ path: slash(path.relative(layout.application, destination)), size: (await stat(destination)).size, sha256: await hashFile(destination) });
     }
     const label = allowDirty ? 'development' : 'prerelease';
-    const signing = target === 'darwin-arm64'
+    const signing = macArchitectures.has(target)
       ? { kind: 'ad-hoc', identity: '-', applePublisherSigned: false, notarized: false, removedBuildMetadata: ['com.apple.FinderInfo'] }
       : { kind: 'no-sec-hub-publisher-signature', publisherSigned: false, vendorRuntimeSignature: 'preserved-if-present' };
     if (developerId) Object.assign(signing, { kind: 'developer-id', identity: developerId.name, teamId: developerId.teamId, applePublisherSigned: true, hardenedRuntime: true, notarized: undefined });
@@ -490,13 +505,13 @@ async function buildPackage({ target, out, cache, allowDirty, macSignIdentity, n
       signatureLog += await verifyMacDeveloperSignature(layout.application, developerId.teamId);
     } else {
       await writeFile(path.join(layout.resources, 'desktop-build.json'), json(metadata));
-      if (target === 'darwin-arm64') {
+      if (macArchitectures.has(target)) {
         await prepareMacSigning(layout.application);
         await run('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', layout.application]);
       }
       await verifyArchive(bundledScanner, bundledTools.osv.binary);
     }
-    if (target === 'darwin-arm64') {
+    if (macArchitectures.has(target)) {
       const verification = await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=2', layout.application]);
       await writeFile(path.join(out, 'codesign-verification.log'), signatureLog + verification.stdout + verification.stderr);
     }
@@ -510,14 +525,14 @@ async function buildPackage({ target, out, cache, allowDirty, macSignIdentity, n
     const files = await inventory(layout.application);
     const basename = `sec-hub-desktop-${appMetadata.version}-${target}-${developerId ? (notarization ? 'notarized-' : 'developer-id-') : ''}${label}`;
     const archive = path.join(out, `${basename}.zip`);
-    const stagingArchive = target === 'darwin-arm64' ? path.join(stage, path.basename(archive)) : archive;
-    roundtrip = await packAndVerify({ application: layout.application, archive: stagingArchive, target, expectedFiles: files, developerId, notarized: Boolean(notarization) });
+    const stagingArchive = macArchitectures.has(target) ? path.join(stage, path.basename(archive)) : archive;
+    roundtrip = await packAndVerify({ application: layout.application, archive: stagingArchive, target, expectedFiles: files, developerId, notarized: Boolean(notarization), allowMacCrossArch });
     const archiveMetadata = { filename: path.basename(archive), size: (await stat(stagingArchive)).size, sha256: await hashFile(stagingArchive) };
     await writeFile(path.join(out, 'archive-verification.json'), json(roundtrip.verification));
-    if (target === 'darwin-arm64') await writeFile(path.join(out, 'archive-codesign-verification.log'), roundtrip.signatureLog);
+    if (macArchitectures.has(target)) await writeFile(path.join(out, 'archive-codesign-verification.log'), roundtrip.signatureLog);
     // CI and local smoke launch files freshly extracted from the deliverable.
     const outputStage = path.join(out, 'package');
-    if (target === 'darwin-arm64') await run('/usr/bin/ditto', [roundtrip.directory, outputStage]);
+    if (macArchitectures.has(target)) await run('/usr/bin/ditto', [roundtrip.directory, outputStage]);
     else await cp(roundtrip.directory, outputStage, { recursive: true, dereference: false });
     const outputLayout = platformLayout(outputStage, target);
     if (json(await inventory(outputLayout.application)) !== json(files)) throw new Error('Convenience package copy differs from the verified archive inventory');
@@ -536,6 +551,7 @@ function argumentsFor(argv) {
   const options = {};
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--allow-dirty') options.allowDirty = true;
+    else if (argv[i] === '--allow-mac-cross-arch') options.allowMacCrossArch = true;
     else if (argv[i] === '--mac-sign-identity' && argv[i + 1]) options.macSignIdentity = argv[++i];
     else if (argv[i] === '--notary-profile' && argv[i + 1]) options.notaryProfile = argv[++i];
     else if (['--target', '--out', '--cache'].includes(argv[i]) && argv[i + 1]) options[argv[i].slice(2)] = argv[++i];

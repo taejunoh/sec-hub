@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const build = await import('../build.mjs').catch(() => ({}));
+const hostTarget = process.platform + '-' + process.arch;
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 async function fixture(t) {
   const dir = await mkdtemp(path.join(tmpdir(), 'sec-hub-build-test-'));
@@ -67,10 +68,21 @@ test('runtime validation requires both vendor notices and the executable', async
   await assert.rejects(build.validateRuntime(dir, 'win32-x64'), /electron.exe/);
 });
 
+test('macOS runtime validation rejects a Mach-O built for the other architecture', { skip: process.platform !== 'darwin' }, async t => {
+  const { execFileSync } = await import('node:child_process');
+  const dir = await fixture(t);
+  await file(dir, 'LICENSE'); await file(dir, 'LICENSES.chromium.html');
+  await mkdir(path.join(dir, 'Electron.app/Contents/MacOS'), { recursive: true });
+  const executable = path.join(dir, 'Electron.app/Contents/MacOS/Electron');
+  execFileSync('/usr/bin/lipo', [path.join(repository, 'src/native/darwin-acl-reader'), '-thin', 'x86_64', '-output', executable]);
+  await build.validateRuntime(dir, 'darwin-x64');
+  await assert.rejects(build.validateRuntime(dir, 'darwin-arm64'), /architecture/i);
+});
+
 test('platform layout returns the actual named executable and resources directory', () => {
   assert.equal(typeof build.platformLayout, 'function', 'native platform layout is required');
   const base = path.resolve('/package');
-  assert.deepEqual(build.platformLayout(base, 'darwin-arm64'), { application: path.join(base, 'Sec Hub.app'), executable: path.join(base, 'Sec Hub.app/Contents/MacOS/SecHub'), resources: path.join(base, 'Sec Hub.app/Contents/Resources') });
+  for (const target of ['darwin-arm64', 'darwin-x64']) assert.deepEqual(build.platformLayout(base, target), { application: path.join(base, 'Sec Hub.app'), executable: path.join(base, 'Sec Hub.app/Contents/MacOS/SecHub'), resources: path.join(base, 'Sec Hub.app/Contents/Resources') });
   assert.deepEqual(build.platformLayout(base, 'win32-x64'), { application: path.join(base, 'Sec Hub'), executable: path.join(base, 'Sec Hub/Sec Hub.exe'), resources: path.join(base, 'Sec Hub/resources') });
   assert.throws(() => build.platformLayout(base, 'linux-x64'), /unsupported/i);
 });
@@ -163,7 +175,7 @@ test('the actual packing and fresh extraction gate preserves quarantine and unre
   const { dir, application } = await signedMacFixture(t); const expectedFiles = await fixtureInventory(application);
   const previous = process.env.DITTONORSRC; process.env.DITTONORSRC = '1';
   let result;
-  try { result = await build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: 'darwin-arm64', expectedFiles }); }
+  try { result = await build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: hostTarget, expectedFiles }); }
   finally { if (previous === undefined) delete process.env.DITTONORSRC; else process.env.DITTONORSRC = previous; }
   t.after(() => rm(result.directory, { recursive: true, force: true }));
   assert.deepEqual(result.files, expectedFiles);
@@ -177,14 +189,14 @@ test('the actual packing and fresh extraction gate preserves quarantine and unre
 test('the distributable gate rejects an archive whose extracted bytes differ from the signed inventory', { skip: process.platform !== 'darwin' }, async t => {
   assert.equal(typeof build.packAndVerify, 'function', 'roundtrip inventory comparison is required');
   const { dir, application } = await signedMacFixture(t); const expectedFiles = await fixtureInventory(application); expectedFiles[0].sha256 = '0'.repeat(64);
-  await assert.rejects(build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: 'darwin-arm64', expectedFiles }), /inventory/i);
+  await assert.rejects(build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: hostTarget, expectedFiles }), /inventory/i);
 });
 
 test('the distributable gate rejects invalid attached Finder metadata after extraction without repairing it', { skip: process.platform !== 'darwin' }, async t => {
   assert.equal(typeof build.packAndVerify, 'function', 'post-extraction signature verification is required');
   const { execFileSync } = await import('node:child_process'); const { dir, application } = await signedMacFixture(t);
   execFileSync('/usr/bin/xattr', ['-wx', 'com.apple.FinderInfo', '0000000000000000200000000000000000000000000000000000000000000000', path.join(application, 'Contents/Resources/preserved.txt')]);
-  await assert.rejects(build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: 'darwin-arm64', expectedFiles: await fixtureInventory(application) }), /codesign|Finder|attached/i);
+  await assert.rejects(build.packAndVerify({ application, archive: path.join(dir, 'fixture.zip'), target: hostTarget, expectedFiles: await fixtureInventory(application) }), /codesign|Finder|attached/i);
 });
 
 test('Developer ID options cannot affect Windows and notarization requires Developer ID', async () => {
@@ -196,25 +208,35 @@ test('Developer ID options cannot affect Windows and notarization requires Devel
   for (const options of invalid) await assert.rejects(build.build(options), /Developer ID|macOS/i);
 });
 
-test('macOS rejects a matching scanner hash in an unsealed Developer ID receipt', { skip: process.platform !== 'darwin' || process.arch !== 'arm64' }, async t => {
+test('the Apple silicon host requires an explicit opt-in to build an Intel package', { skip: hostTarget !== 'darwin-arm64' }, async () => {
+  const options = { target: 'darwin-x64', macSignIdentity: 'Developer ID Application: Example (AAAAAAAAAA)', notaryProfile: 'example' };
+  await assert.rejects(build.build(options), /native target/i);
+  await assert.rejects(build.build({ ...options, allowMacCrossArch: true }), /absolute paths/i);
+});
+
+test('the Intel packaging opt-in cannot bypass Windows host validation', async () => {
+  await assert.rejects(build.build({ target: 'win32-x64', allowMacCrossArch: true }), /Intel macOS.*Apple silicon/i);
+});
+
+test('macOS rejects a matching scanner hash in an unsealed Developer ID receipt', { skip: process.platform !== 'darwin' }, async t => {
   const { verifiedOSV } = await import('../app/tools.mjs');
   const { copyFile } = await import('node:fs/promises');
   const dir = await fixture(t);
   const contents = path.join(await realpath(dir), 'Contents');
   const resources = path.join(contents, 'Resources');
-  const binary = JSON.parse(await readFile(path.join(repository, 'desktop/app/osv-lock.json'), 'utf8')).targets['darwin-arm64'];
+  const binary = JSON.parse(await readFile(path.join(repository, 'desktop/app/osv-lock.json'), 'utf8')).targets[hostTarget];
   const contentsPath = path.join('MacOS', binary.filename);
   const scanner = path.join(contents, contentsPath);
   await mkdir(path.dirname(scanner), { recursive: true });
   await copyFile('/usr/bin/true', scanner);
   const replacement = await readFile(scanner);
   const packagedBinary = { path: 'Contents/' + contentsPath, size: replacement.length, sha256: createHash('sha256').update(replacement).digest('hex') };
-  const metadata = { target: 'darwin-arm64', signing: { kind: 'developer-id' }, bundledTools: { osv: { binary, packagedBinary } } };
+  const metadata = { target: hostTarget, signing: { kind: 'developer-id' }, bundledTools: { osv: { binary, packagedBinary } } };
   await file(resources, 'desktop-build.json', JSON.stringify(metadata));
   assert.equal(await verifiedOSV(resources), null);
 });
 
-test('the macOS build rejects an output symlink even if its destination is empty', { skip: process.platform !== 'darwin' || process.arch !== 'arm64' }, async t => {
+test('the macOS build rejects an output symlink even if its destination is empty', { skip: process.platform !== 'darwin' }, async t => {
   const dir = await fixture(t);
   const destination = path.join(dir, 'destination');
   const out = path.join(dir, 'output');
@@ -222,8 +244,8 @@ test('the macOS build rejects an output symlink even if its destination is empty
   await mkdir(destination);
   await symlink(destination, out);
   const lock = JSON.parse(await readFile(path.join(repository, 'desktop/runtime-lock.json'), 'utf8'));
-  await file(cache, lock.targets['darwin-arm64'].filename, 'invalid offline cache fixture');
-  await assert.rejects(build.build({ target: 'darwin-arm64', out, cache, allowDirty: true }), /empty real directory/i);
+  await file(cache, lock.targets[hostTarget].filename, 'invalid offline cache fixture');
+  await assert.rejects(build.build({ target: hostTarget, out, cache, allowDirty: true }), /empty real directory/i);
   assert.deepEqual(await readdir(destination), []);
 });
 

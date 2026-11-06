@@ -58,7 +58,7 @@ The inbox puts the highest severity findings first. Start with critical and
 high findings, and confirm whether candidates affect your project. Search by
 package, title, or advisory ID, or filter by severity.
 
-In 0.2.3, open a finding and look under **What to do next** for **Check first**
+In 0.2.4, open a finding and look under **What to do next** for **Check first**
 and **Recommended action**. The guidance uses saved scanner evidence, such
 as an advisory's fixed version or code suggested by a tool. For PHP header
 warnings, it explains how to verify the installed version and patch status.
@@ -77,29 +77,34 @@ results** restores the search, filters, scroll position, and keyboard focus.
 
 </details>
 
-## Download Security Scan Hub Desktop 0.2.3
+## Download Security Scan Hub Desktop 0.2.4
 
-Version 0.2.3 is a prerelease. Select several security tools, start one scan,
+Version 0.2.4 is a prerelease. Select several security tools, start one scan,
 and review their findings and run status together in the **Security Inbox**.
 
 ### Install on Mac (Apple silicon)
 
-1. Download the Developer ID-signed and notarized package. [Download Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-darwin-arm64-notarized-prerelease.zip)
+1. Download the Developer ID-signed and notarized package. [Download Apple silicon ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-darwin-arm64-notarized-prerelease.zip)
 2. In Finder, double-click the ZIP to extract it.
 3. Open **Sec Hub.app**. The app window is titled **Security Scan Hub**.
 
-The Mac package supports M-series Macs and can run all seven integrations
-after setup.
+The Apple silicon package supports M-series Macs and can run all seven
+integrations after setup.
 
-### Use on Mac (Intel)
+### Install on Mac (Intel)
 
-The 0.2.3 desktop ZIP requires Apple silicon. Intel Mac users can run an OSV
-scan in Terminal and review the results and recommended actions in a local
-browser. [Intel Mac setup guide](docs/GETTING-STARTED.md#intel-mac-scan-from-terminal)
+1. Download the signed and notarized Intel package. [Download Intel Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-darwin-x64-notarized-prerelease.zip)
+2. In Finder, double-click the ZIP to extract it.
+3. Open **Sec Hub.app**. The app window is titled **Security Scan Hub**.
+
+The Intel package bundles OSV Scanner for a first scan without Terminal.
+It requires macOS 13 or later. Release validation targets a macOS 15 Intel
+runner; other macOS versions and the other scanner integrations are not covered
+by that validation.
 
 ### Install on Windows (x64)
 
-1. Download the Windows x64 prerelease for Intel and AMD PCs. [Download Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-win32-x64-prerelease.zip)
+1. Download the Windows x64 prerelease for Intel and AMD PCs. [Download Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-win32-x64-prerelease.zip)
 2. In File Explorer, right-click the ZIP and choose **Extract All**.
 3. Open **Sec Hub.exe** from the extracted folder. Keep the extracted files together.
 
@@ -107,14 +112,14 @@ The Windows package is unsigned, so Windows may show an unknown publisher
 warning. Up to five integrations are available after setup. The Cloudflare
 and Anthropic workflows are disabled on Windows.
 
-OSV Scanner is bundled on both platforms. Other tools require setup, and AI
-tools require provider sign-in and consent. [Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.3)
-· [Verify ZIP checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-SHA256SUMS.txt)
+OSV Scanner is bundled on all three platforms. Other tools require setup, and AI
+tools require provider sign-in and consent. [Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.4)
+· [Verify ZIP checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-SHA256SUMS.txt)
 
 The earlier OSV-only [0.2.1 prerelease](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1) is still
 available for users who need that version.
 
-## Run your first scan with 0.2.3
+## Run your first scan with 0.2.4
 
 1. In **Project security scan**, click **Choose folder** and select the project
    folder you want to check. For a first scan, choose the root folder of a

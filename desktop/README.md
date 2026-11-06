@@ -1,17 +1,20 @@
 # Security Scan Hub desktop
 
-Choose the **Security Scan Hub Desktop 0.2.3** prerelease ZIP for your
-computer. [GitHub release page](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.3)
+Choose the **Security Scan Hub Desktop 0.2.4** prerelease ZIP for your
+computer. [GitHub release page](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.4)
 
-- macOS Apple silicon, signed and notarized. [Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-darwin-arm64-notarized-prerelease.zip)
-- Windows x64, unsigned. [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-win32-x64-prerelease.zip)
-- [SHA-256 checksums for both ZIPs](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-SHA256SUMS.txt)
+- macOS Apple silicon, signed and notarized. [Apple silicon ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-darwin-arm64-notarized-prerelease.zip)
+- macOS Intel x64, signed and notarized. [Intel Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-darwin-x64-notarized-prerelease.zip)
+- Windows x64, unsigned. [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-win32-x64-prerelease.zip)
+- [SHA-256 checksums for all three ZIPs](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-SHA256SUMS.txt)
 
 Extract the ZIP and open `Sec Hub.app` on Mac or `Sec Hub.exe` on Windows.
 The app window is titled **Security Scan Hub**. [Step-by-step installation](../docs/GETTING-STARTED.md#1-download-and-open-the-app)
 
-On Intel Macs, use the CLI to scan and the local browser to review results.
-[Intel Mac setup guide](../docs/GETTING-STARTED.md#intel-mac-scan-from-terminal)
+The Intel package bundles OSV Scanner for a first scan without Terminal.
+It requires macOS 13 or later. Release validation targets a macOS 15 Intel
+runner; other macOS versions and the other scanner integrations are not covered
+by that validation.
 
 The scanner build bundles a pinned OSV Scanner. In **Project security scan**,
 choose a folder, keep **OSV Scanner** selected, and click **Start scan**.
@@ -56,13 +59,13 @@ data to the configured provider and consume usage or incur charges.
 
 ## Package signing
 
-The macOS ZIP is signed with Developer ID and includes a stapled notarization
-ticket. The Windows ZIP is unsigned, so Windows may show an unknown publisher warning.
+The macOS ZIPs are signed with Developer ID and include stapled notarization
+tickets. The Windows ZIP is unsigned, so Windows may show an unknown publisher warning.
 
 ## Build and package checks
 
 For maintainers, build on the matching OS and architecture with
-`node desktop/build.mjs --target <darwin-arm64|win32-x64> --out <absolute-empty-output> --cache <absolute-cache>`.
+`node desktop/build.mjs --target <darwin-arm64|darwin-x64|win32-x64> --out <absolute-empty-output> --cache <absolute-cache>`.
 Windows x64 packaging requires an x64 Visual Studio Developer Command Prompt,
 MSVC, and the Windows SDK. `node desktop/smoke.mjs --executable <absolute-packaged-app> --out <absolute-empty-evidence-directory>`
 checks the packaged scan and shutdown; its fixture scan needs network access to
@@ -75,7 +78,8 @@ before staging and checks the executable again after signing. The manifest
 records the source and executable digest. The unpacked scanner adds about
 55 MB on macOS or 59 MB on Windows. To update the pin, cross-check the
 official checksum file and release asset digest, update the desktop lock and
-core adapter together, and run the packaged smoke on both platforms.
+core adapter together, and run the packaged smoke on the supported release
+targets.
 
 **File → Show recent scans** opens reports saved by this app. **Open saved
 view in browser** opens the example or an explicitly opened saved-results

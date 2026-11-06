@@ -12,6 +12,12 @@
       "size": 120939367,
       "sha256": "002b71efcf90e247317d3da486f2d4e51860e9c2889d49f33e229ab2268b0f3b"
     },
+    "darwin-x64": {
+      "filename": "electron-v45.1.0-darwin-x64.zip",
+      "url": "https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-darwin-x64.zip",
+      "size": 125139936,
+      "sha256": "b4667d820149e33a6f016d103de0fcf5d6f05b8297a204232a0d970c00b163a5"
+    },
     "win32-x64": {
       "filename": "electron-v45.1.0-win32-x64.zip",
       "url": "https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip",
