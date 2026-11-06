@@ -2,13 +2,13 @@
 
 ## 1. Download and open the app
 
-[Sec Hub Desktop 0.2.1](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1)
+[Sec Hub Desktop 0.2.1](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1)
 is a prerelease. If the assets are available, choose the ZIP for your computer.
 
-- **Mac with Apple silicon (M-series):** [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip).
+- **Mac with Apple silicon (M-series):** [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip).
   In Finder, double-click the downloaded ZIP. Then double-click **Sec Hub.app**
   (Finder may display it as **Sec Hub**).
-- **Windows x64 (Intel or AMD):** [Download the Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip).
+- **Windows x64 (Intel or AMD):** [Download the Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip).
   In File Explorer, right-click the ZIP, choose **Extract All**, then open
   **Sec Hub.exe** in the extracted **Sec Hub** folder. Keep the extracted files
   together. Windows may show an unknown publisher warning because this build
@@ -22,7 +22,7 @@ the release page, look under **Assets** for the ZIP linked above. The
 The app includes OSV Scanner. You don't need to install Node.js, install OSV
 Scanner separately, or create an OSV account.
 
-To verify either download, use the release's [SHA-256 checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
+To verify either download, use the release's [SHA-256 checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
 
 ## 2. Scan a project folder
 

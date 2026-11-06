@@ -1,12 +1,12 @@
 # Security Scan Hub desktop
 
 If the **Sec Hub Desktop 0.2.1 prerelease** assets are available on the
-[GitHub release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1),
+[GitHub release page](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1),
 choose the ZIP for your platform.
 
-- macOS Apple silicon: [Developer ID signed and notarized ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip)
-- Windows x64: [prerelease ZIP; no Sec Hub publisher signature](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip)
-- Checksums for both ZIPs: [SHA256SUMS.txt](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt)
+- macOS Apple silicon: [Developer ID signed and notarized ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip)
+- Windows x64: [prerelease ZIP; no Sec Hub publisher signature](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip)
+- Checksums for both ZIPs: [SHA256SUMS.txt](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt)
 
 The scanner build bundles a pinned OSV Scanner. In **Project security scan**,
 choose a folder, keep **OSV Scanner** selected, and start the scan. Choose
@@ -16,7 +16,7 @@ metadata services. A completed scan covers the supported dependency files
 that OSV checked.
 
 The 0.2.1 download runs OSV. For multi-tool scans, choose the
-**Security Scan Hub Desktop 0.2.2** ZIP from [GitHub Releases](https://github.com/taejunoh/sec-hub/releases).
+**Security Scan Hub Desktop 0.2.2** ZIP from [GitHub Releases](https://github.com/taejunoh/security-scan-hub/releases).
 Extract it and open the bundled `Sec Hub.app` or `Sec Hub.exe`. The window
 opens under the new **Security Scan Hub** name.
 

@@ -5,7 +5,7 @@ Security Scan Hub combines dependency checks, AI skill scanning, code review,
 and URL checks in one report. See the findings and which tools completed,
 were skipped, or failed. Results are available as HTML, JSON, and SARIF.
 
-**Desktop quick start.** Download the [desktop prerelease](https://github.com/taejunoh/sec-hub/releases)
+**Desktop quick start.** Download the [desktop prerelease](https://github.com/taejunoh/security-scan-hub/releases)
 and run Google OSV Scanner without a terminal. To run multiple tools,
 select them in the app and click **Start scan**. The combined report opens
 automatically in the **Security Inbox**. A supported Mac can run all seven
@@ -71,17 +71,17 @@ results** restores the search, filters, scroll position, and keyboard focus.
 ## Download Sec Hub Desktop 0.2.1
 
 This earlier OSV-only release is listed here for users who need version 0.2.1.
-For the current Security Scan Hub desktop build, see [GitHub Releases](https://github.com/taejunoh/sec-hub/releases).
+For the current Security Scan Hub desktop build, see [GitHub Releases](https://github.com/taejunoh/security-scan-hub/releases).
 
 | Your computer | Download |
 | --- | --- |
-| Mac with Apple silicon (M-series) | [Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip), signed and notarized |
-| Windows x64 (Intel or AMD) | [Windows ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip), without a Sec Hub publisher signature. Windows may show an unknown publisher warning. |
+| Mac with Apple silicon (M-series) | [Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip), signed and notarized |
+| Windows x64 (Intel or AMD) | [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip), without a Sec Hub publisher signature. Windows may show an unknown publisher warning. |
 
 This release supports Apple silicon Macs and Windows x64 PCs. Intel Macs
 and Windows ARM devices are outside its support range.
-[Browse all release assets](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1).
-Verify either ZIP with the [SHA-256 checksums](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
+[Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1).
+Verify either ZIP with the [SHA-256 checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
 
 ## Run your first scan with 0.2.1
 
