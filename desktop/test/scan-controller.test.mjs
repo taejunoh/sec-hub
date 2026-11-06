@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { access, chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdtemp, mkdir, readFile, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,14 @@ import { isTrustedSender } from '../app/policy.mjs';
 const sample = new URL('../app/sample/example/', import.meta.url);
 const samplePath = fileURLToPath(sample);
 const token = 'a'.repeat(64);
+
+async function fixtureNode(root) {
+  if (process.platform !== 'win32') return process.execPath;
+  // The CI tool cache may have broader ACLs than the app accepts.
+  const executable = join(root, 'node.exe');
+  await copyFile(process.execPath, executable);
+  return executable;
+}
 
 async function fixture(t, options = {}) {
   const root = await mkdtemp(join(await realpath(tmpdir()), 'sec-hub-desktop-host-'));
@@ -91,12 +99,13 @@ test('AI jobs require consent from the renderer and the native confirmation, and
 
 test('one native config selection passes all seven adapters and the explicit endpoint to one job', async (t) => {
   let chosen;
+  let node;
   let received;
   const started = new Promise((resolve) => { received = resolve; });
   let consent;
   const { host, root, target } = await fixture(t, {
     pickConfig: async () => chosen,
-    pickNode: async () => process.execPath,
+    pickNode: async () => node,
     inspectTools: async ({ config } = {}) => Object.entries(config?.tools ?? {}).map(([id, tool]) => ({
       id, ...tool, installation: 'installed',
       ai: ['codex-security', 'open-code-review', 'cloudflare', 'anthropic'].includes(id),
@@ -105,6 +114,7 @@ test('one native config selection passes all seven adapters and the explicit end
     confirmAI: async ({ toolIds }) => { consent = toolIds; return true; },
     scan: async (value) => { received(value); return { id: 'seven', status: 'completed', directory: value.out }; },
   });
+  node = await fixtureNode(root);
   const toolIds = ['osv', 'skillspector', 'codex-security', 'open-code-review', 'php2shell', 'cloudflare', 'anthropic'];
   const workRoot = join(root, 'work');
   const tools = Object.fromEntries(toolIds.map(id => [id, { command: process.execPath, args: [] }]));
@@ -118,7 +128,8 @@ test('one native config selection passes all seven adapters and the explicit end
   assert.equal(configured.configLabel, 'trusted.json');
   assert.equal(configured.tools.filter(tool => tool.selectable).length, 7);
   for (const secret of [root, target, process.execPath, 'local-test-model']) assert.ok(!JSON.stringify(configured).includes(secret));
-  assert.equal((await host.chooseNode()).nodeConfigured, true);
+  const selectedNode = await host.chooseNode();
+  assert.equal(selectedNode.nodeConfigured, true, JSON.stringify(selectedNode.error));
 
   const request = { toolIds, aiConsent: true };
   assert.deepEqual(await host.startScan(request), { error: { code: 'php_url_required' } });
@@ -184,12 +195,14 @@ test('the desktop inspector and real engine publish one result for two offline e
     else require('node:fs').writeFileSync(process.argv[process.argv.indexOf('--output-file') + 1], '{"results":[]}');
   `);
   chosen = join(root, 'tools.json');
+  const node = await fixtureNode(root);
   await writeFile(chosen, JSON.stringify({ tools: {
-    osv: { command: process.execPath, args: [osv] },
-    php2shell: { command: process.execPath, args: [checker] },
+    osv: { command: node, args: [osv] },
+    php2shell: { command: node, args: [checker] },
   } }));
   await host.chooseFolder();
-  assert.equal((await host.chooseConfig()).tools.filter(tool => tool.selectable).length, 2);
+  const configured = await host.chooseConfig();
+  assert.equal(configured.tools?.filter(tool => tool.selectable).length, 2, JSON.stringify(configured.tools ?? configured.error));
   // The original reviewed snapshot remains the authority for this session.
   await writeFile(chosen, '{"tools":{}}');
   const { job } = await host.startScan({ toolIds: ['osv', 'php2shell'], aiConsent: false, phpUrl });
