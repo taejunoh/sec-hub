@@ -91,6 +91,12 @@ and review their findings and run status together in the **Security Inbox**.
 The Mac package supports M-series Macs and can run all seven integrations
 after setup.
 
+### Use on Mac (Intel)
+
+The 0.2.3 desktop ZIP requires Apple silicon. Intel Mac users can run an OSV
+scan in Terminal and review the results and recommended actions in a local
+browser. [Intel Mac setup guide](docs/GETTING-STARTED.md#intel-mac-scan-from-terminal)
+
 ### Install on Windows (x64)
 
 1. Download the Windows x64 prerelease for Intel and AMD PCs. [Download Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-win32-x64-prerelease.zip)

@@ -10,6 +10,9 @@ computer. [GitHub release page](https://github.com/taejunoh/security-scan-hub/re
 Extract the ZIP and open `Sec Hub.app` on Mac or `Sec Hub.exe` on Windows.
 The app window is titled **Security Scan Hub**. [Step-by-step installation](../docs/GETTING-STARTED.md#1-download-and-open-the-app)
 
+On Intel Macs, use the CLI to scan and the local browser to review results.
+[Intel Mac setup guide](../docs/GETTING-STARTED.md#intel-mac-scan-from-terminal)
+
 The scanner build bundles a pinned OSV Scanner. In **Project security scan**,
 choose a folder, keep **OSV Scanner** selected, and click **Start scan**.
 The saved report opens automatically in the **Security Inbox**.
