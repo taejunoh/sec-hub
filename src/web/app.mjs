@@ -1,14 +1,21 @@
 import { initializeExecutionView } from './execution-view.mjs';
 import { translate } from './i18n.mjs';
-import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, gateLabel, pageItems, runStatusLabel, toolStatusLabel, verificationLabel, transitionFindingView } from './view-model.mjs';
+import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, findingPackage, findingSeverity, gateLabel, pageItems, runStatusLabel, sortFindingsBySeverity, toolStatusLabel, verificationLabel, transitionFindingView } from './view-model.mjs';
 
 const $ = (id) => document.getElementById(id);
+const desk = () => document.querySelector('.desk');
 const el = (tag, className, value) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (value !== undefined && value !== null) node.textContent = String(value);
   return node;
 };
+function advisoryText(node, value) {
+  for (const [index, text] of String(value).split(/\x60([^\x60\n]+)\x60/).entries()) {
+    node.append(index % 2 ? el('code', '', text) : text);
+  }
+  return node;
+}
 const field = (label, value, className = '', isPath = false) => {
   const cell = el('div', 'summary-cell');
   const content = el('dd', className);
@@ -48,6 +55,16 @@ let allFindings = [];
 let activeRun;
 let filteredFindings = [];
 
+const severityKeys = { critical: '치명적', high: '높음', medium: '보통', low: '낮음', info: '정보', unknown: '알 수 없음' };
+const severityName = (severity) => t(severityKeys[severity]);
+const packageLabel = ({ name, version }) => name && (version ? `${name} ${version}` : name);
+const toolName = (id) => id === 'osv' ? 'OSV Scanner' : id;
+const projectName = (path) => typeof path === 'string' && path.split(/[\\/]/).filter(Boolean).at(-1) || t('프로젝트 검사 결과');
+function severityBadge(finding) {
+  const severity = findingSeverity(finding);
+  return el('span', `severity-badge severity-${severity}`, severityName(severity));
+}
+
 const chromeMessages = new Map();
 function chromeMessage(id, key, values) {
   chromeMessages.set(id, { key, values });
@@ -61,6 +78,11 @@ function setCatalogState(key, visible = true, values) {
 function safeStatusStamp(status) {
   const stamp = el('span', `status-stamp ${status ?? 'unknown'}`, t(runStatusLabel(status)));
   return stamp;
+}
+function focusResults() {
+  const heading = $('workspace-title');
+  heading.focus({ preventScroll: true });
+  heading.scrollIntoView({ block: 'start', behavior: 'instant' });
 }
 function readyRuns() {
   return (catalog?.artifacts ?? []).filter((item) => item.state === 'ready' && item.kind === 'run');
@@ -142,8 +164,11 @@ function drawCatalog() {
     const button = el('button', 'artifact-button');
     button.type = 'button';
     button.setAttribute('aria-current', artifact.id === selectedId ? 'true' : 'false');
-    button.addEventListener('click', () => selectArtifact(artifact.id));
-    const name = el('span', 'artifact-name', artifact.label);
+    button.addEventListener('click', async () => {
+      await selectArtifact(artifact.id);
+      if (selectedId === artifact.id && $('detail-state').hidden) focusResults();
+    });
+    const name = el('span', 'artifact-name', artifact.kind === 'run' && artifact.summary ? projectName(artifact.summary.target?.path) : artifact.label);
     const meta = el('span', 'artifact-meta');
     const kind = el('span', 'tag', labelFor(artifact));
     const state = el('span', artifact.state === 'error' ? 'tag alert' : 'tag', statusFor(artifact));
@@ -152,8 +177,9 @@ function drawCatalog() {
     if (artifact.state === 'error') {
       const reason = el('span', 'artifact-meta', t(artifact.error?.message ?? '자료를 읽을 수 없습니다.'));
       button.append(reason);
-    } else if (artifact.kind === 'run') {
-      button.append(el('span', 'artifact-meta', `${artifact.summary.runId} · ${artifact.summary.target.path}`));
+    } else if (artifact.kind === 'run' && artifact.summary?.startedAt) {
+      const date = new Date(artifact.summary.startedAt);
+      if (!Number.isNaN(date.valueOf())) button.append(el('span', 'artifact-meta', date.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' })));
     } else if (artifact.kind === 'comparison') {
       button.append(el('span', 'artifact-meta', `${artifact.summary.baselineId} → ${artifact.summary.currentId}`));
     }
@@ -205,7 +231,7 @@ async function applyExecutionCatalog(value, artifactId) {
   updateSnapshotChrome();
   if (artifactId && catalog.artifacts.some((item) => item.id === artifactId)) {
     await selectArtifact(artifactId);
-    if (executionMode.desktop && selectedId === artifactId) $('workspace-title').focus();
+    if (executionMode.desktop && selectedId === artifactId) focusResults();
   }
 }
 async function loadCatalog() {
@@ -245,8 +271,10 @@ function clearDetail(message = '목록에서 저장된 검사 또는 비교를 �
   selectedArtifact = null;
   savedComparison = null;
   allFindings = [];
+  delete desk().dataset.artifact;
+  $('catalog-disclosure').open = true;
+  chromeMessage('workspace-title', '검사 기록');
   resetFindingView();
-  chromeMessage('selection-mark', '선택 없음');
   $('detail-content').replaceChildren();
   delete $('detail-content').dataset.comparisonPage;
   $('detail-state').hidden = false;
@@ -341,14 +369,46 @@ function drawEvidence() {
     return;
   }
   const article = el('article', 'evidence-record');
-  article.append(el('h3', '', finding.title ?? t('제목 미기록')));
-  appendDefinitionGrid(article, [
-    [t('심각도'), finding.severity ?? 'unknown'], [t('규칙 ID'), finding.ruleId ?? t('규칙 미기록')],
-    [t('도구'), finding.toolId ?? t('도구 미기록')], [t('검증'), verificationLabel(finding.verification, locale)],
-  ]);
+  const dependency = findingPackage(finding);
+  const lead = el('div', 'evidence-lead');
+  const label = packageLabel(dependency);
+  if (finding.ruleId) lead.append(el('p', 'evidence-id mono', finding.ruleId));
+  if (label) lead.append(el('p', 'evidence-package', label));
+  lead.append(severityBadge(finding), advisoryText(el('h3'), finding.title ?? t('제목 미기록')));
+  article.append(lead);
+
+  const summary = [finding.description, finding.message]
+    .filter((value) => typeof value === 'string')
+    .map((value) => value.trim().split(/\r?\n\s*\r?\n|(?:```|~~~)/, 1)[0].trim())
+    .find((value) => value);
+  if (summary) {
+    const description = el('section', 'evidence-field evidence-description');
+    const excerpt = summary.length > 480 ? `${summary.slice(0, 480).replace(/\s+\S*$/, '').trimEnd()}…` : summary;
+    description.append(el('h4', '', t('문제 설명')), advisoryText(el('p'), excerpt));
+    article.append(description);
+  }
+  if (dependency.fixedVersion || dependency.advisoryUrl) {
+    const advisory = el('section', 'evidence-field evidence-advisory');
+    advisory.append(el('h4', '', t('다음 조치')));
+    if (dependency.fixedVersion) advisory.append(el('p', '', t('권고문에 기록된 수정 버전: {v0}', { v0: dependency.fixedVersion })));
+    if (dependency.advisoryUrl) {
+      const link = el('a', '', t('보안 권고문 보기'));
+      link.href = dependency.advisoryUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      advisory.append(link);
+    }
+    article.append(advisory);
+  }
   const locations = el('section', 'evidence-field');
   locations.append(el('h4', '', t('위치')), findingLocation(finding.location));
   article.append(locations);
+  const raw = el('details', 'evidence-raw');
+  raw.append(el('summary', '', t('원본 근거 및 메타데이터')));
+  appendDefinitionGrid(raw, [
+    [t('규칙 ID'), finding.ruleId ?? t('규칙 미기록')],
+    [t('도구'), toolName(finding.toolId) ?? t('도구 미기록')], [t('검증'), verificationLabel(finding.verification, locale)],
+  ]);
   const pieces = [
     [t('메시지'), finding.message], [t('설명'), finding.description], [t('추가 위치'), finding.locations],
     [t('별칭'), finding.aliases], [t('원본 레코드'), finding.sourceRecords], [t('증거'), finding.evidence],
@@ -359,21 +419,23 @@ function drawEvidence() {
     if (value === undefined || value === null) continue;
     const block = el('section', 'evidence-field');
     block.append(el('h4', '', label), el('pre', 'mono', typeof value === 'string' ? value : jsonText(value)));
-    article.append(block);
+    raw.append(block);
   }
+  article.append(raw);
   parent.append(article);
 }
-function selectFinding(index) {
+function selectFinding(index, keyboard) {
   listScroll = window.scrollY;
   listFocusIndex = index;
   findingView = transitionFindingView(allFindings, findingView, { selectedIndex: index });
   drawFindingRows();
   drawEvidence();
-  document.querySelector(`.finding-select[data-finding-index="${index}"]`)?.focus({ preventScroll: true });
   document.querySelector('.desk').dataset.reading = 'evidence';
   if (window.matchMedia('(max-width: 1120px)').matches) {
-    $('evidence-panel').scrollIntoView({ block: 'start' });
+    $('evidence-panel').scrollIntoView({ block: 'start', behavior: 'instant' });
     $('evidence-back').focus({ preventScroll: true });
+  } else if (keyboard) {
+    document.querySelector(`.finding-select[data-finding-index="${index}"]`)?.focus({ preventScroll: true });
   }
 }
 function drawPager(parent, info, onPage) {
@@ -414,17 +476,17 @@ function drawFindingRows() {
     const content = findingCell(t('항목 / 근거'), 'finding-cell--primary');
     const index = allFindings.indexOf(finding);
     row.dataset.selected = String(index === findingView.selectedIndex);
-    const select = el('button', 'finding-select', finding.title ?? t('제목 미기록'));
+    const select = el('button', 'finding-select');
+    const label = packageLabel(findingPackage(finding));
+    if (label) select.append(el('span', 'finding-package', label));
+    select.append(advisoryText(el('span', 'finding-title'), finding.title ?? t('제목 미기록')));
     select.type = 'button';
     select.dataset.findingIndex = String(index);
     select.setAttribute('aria-pressed', String(index === findingView.selectedIndex));
-    select.addEventListener('click', () => selectFinding(index));
+    select.addEventListener('click', (event) => selectFinding(index, event.detail === 0));
     content.append(select);
-    content.append(el('span', 'finding-row-id mono', `${finding.toolId ?? t('도구 미기록')} · ${finding.ruleId ?? t('규칙 미기록')}`));
-    const path = typeof finding.location === 'string' ? finding.location : finding.location?.path;
-    if (typeof path === 'string') content.append(el('span', 'finding-row-location mono', compactPath(path).summary));
     const severity = findingCell(t('심각도'));
-    severity.append(el('span', `severity-badge severity-${['critical', 'high', 'medium', 'low', 'info'].includes(finding.severity) ? finding.severity : 'unknown'}`, finding.severity ?? 'unknown'));
+    severity.append(severityBadge(finding));
     row.append(content, severity);
     tbody.append(row);
   }
@@ -435,9 +497,9 @@ function drawFindingRows() {
     : t('현재 검색·필터와 일치하는 항목이 없습니다. 조건을 변경하거나 결과 필터를 초기화하세요.');
   const pager = section.querySelector('.pager');
   if (pager) pager.remove();
-  drawPager(section, info, (page) => { findingView = transitionFindingView(allFindings, findingView, { page }); findingPage = findingView.page; drawFindingRows(); });
+  if (info.pages > 1) drawPager(section, info, (page) => { findingView = transitionFindingView(allFindings, findingView, { page }); findingPage = findingView.page; drawFindingRows(); });
   const count = section.querySelector('.block-heading small');
-  if (count) count.textContent = t('{v0}개 일치 / 전체 {v1}개 저장 행', { v0: info.total, v1: allFindings.length });
+  if (count) count.textContent = info.total === allFindings.length ? '' : t('{v1}건 중 {v0}건 표시', { v0: info.total, v1: allFindings.length });
 }
 function drawFindings(parent, run) {
   const section = el('section', 'block');
@@ -446,13 +508,13 @@ function drawFindings(parent, run) {
   const controls = el('div', 'finding-controls');
   const searchLabel = el('label', 'filters-label', t('검색'));
   const search = document.createElement('input');
-  search.type = 'search'; search.placeholder = t('규칙, 제목, 위치'); search.setAttribute('aria-label', t('검사 결과 검색'));
+  search.type = 'search'; search.placeholder = t('패키지, 제목, 권고문 ID'); search.setAttribute('aria-label', t('검사 결과 검색'));
   search.value = findingView.query; search.id = 'finding-search';
   searchLabel.append(search);
   const severityLabel = el('label', 'filters-label', t('심각도'));
   const severity = document.createElement('select');
   severity.setAttribute('aria-label', t('심각도 필터'));
-  for (const [value, title] of [['all', t('전체')], ['critical', 'critical'], ['high', 'high'], ['medium', 'medium'], ['low', 'low'], ['info', 'info'], ['unknown', 'unknown']]) {
+  for (const [value, title] of [['all', t('전체')], ...Object.keys(severityKeys).map((key) => [key, severityName(key)])]) {
     const option = document.createElement('option'); option.value = value; option.textContent = title; severity.append(option);
   }
   severity.value = findingView.severity; severity.id = 'finding-severity';
@@ -463,12 +525,17 @@ function drawFindings(parent, run) {
   for (const id of tools) { const option = document.createElement('option'); option.value = id; option.textContent = id; toolSelect.append(option); }
   toolSelect.value = findingView.tool; toolSelect.id = 'finding-tool';
   toolLabel.append(toolSelect);
-  const reset = el('button', 'filters-reset', t('결과 필터 초기화'));
+  const reset = el('button', 'quiet-button filters-reset', t('결과 필터 초기화'));
   reset.type = 'button';
-  controls.append(searchLabel, severityLabel, toolLabel, reset);
+  controls.append(searchLabel, severityLabel);
+  if (tools.length > 1) {
+    controls.classList.add('has-tool-filter');
+    controls.append(toolLabel);
+  }
+  controls.append(reset);
   const active = el('div', 'active-filters');
   active.setAttribute('aria-label', t('적용 중인 결과 필터'));
-  section.append(detailHeading(t('저장된 발견 항목'), t('{v0}개 저장 행', { v0: run.findings?.length ?? 0 })), controls, active);
+  section.append(detailHeading(t('발견 항목'), ''), controls, active);
   const scroll = el('div', 'table-scroll');
   const table = el('table', 'finding-table');
   table.setAttribute('role', 'table');
@@ -477,7 +544,7 @@ function drawFindings(parent, run) {
   thead.setAttribute('role', 'rowgroup');
   const tr = document.createElement('tr');
   tr.setAttribute('role', 'row');
-  for (const heading of [t('항목 / 근거'), t('심각도')]) {
+  for (const heading of [t('발견 항목'), t('심각도')]) {
     const th = el('th', '', heading);
     th.scope = 'col';
     th.setAttribute('role', 'columnheader');
@@ -491,14 +558,14 @@ function drawFindings(parent, run) {
   empty.hidden = true;
   section.append(empty);
   parent.append(section);
-  allFindings = Array.isArray(run.findings) ? run.findings : [];
+  allFindings = sortFindingsBySeverity(run.findings);
   const apply = () => {
     active.replaceChildren();
     const conditions = [
-      [t('검색'), search.value.trim()], [t('심각도'), severity.value === 'all' ? '' : severity.value], [t('도구'), toolSelect.value === 'all' ? '' : toolSelect.value],
+      [t('검색'), search.value.trim()], [t('심각도'), severity.value === 'all' ? '' : severityName(severity.value)], [t('도구'), toolSelect.value === 'all' ? '' : toolName(toolSelect.value)],
     ].filter(([, value]) => value);
     for (const [label, value] of conditions) active.append(el('span', 'filter-chip', `${label}: ${value}`));
-    if (!conditions.length) active.append(el('span', 'muted', t('적용 중인 결과 필터 없음')));
+    active.hidden = reset.hidden = !conditions.length;
     findingView = transitionFindingView(allFindings, findingView, { query: search.value, severity: severity.value, tool: toolSelect.value });
     filteredFindings = filterFindings(allFindings, findingView);
     findingPage = findingView.page;
@@ -518,16 +585,35 @@ function drawFindings(parent, run) {
 }
 function drawRun(parent, run, artifact) {
   const top = el('div');
-  const title = el('div', 'section-heading');
-  title.append(el('div', '', ''));
-  const titleText = title.firstChild;
-  titleText.append(el('p', 'eyebrow', t('SAVED RUN · 원본 검사 재실행 안 함')), el('h3', '', artifact.label));
-  title.append(safeStatusStamp(run.status));
-  top.append(title);
+  const overview = el('div', 'run-overview');
+  const runSummary = el('div', 'run-summary');
+  const heading = el('div', 'section-heading');
+  heading.append(el('h3', '', projectName(run.target?.path)), safeStatusStamp(run.status));
+  const usedTools = (run.tools ?? []).filter((tool) => tool.selected !== false && tool.status !== 'skipped');
+  const findings = Array.isArray(run.findings) ? run.findings : [];
+  const total = t('발견 항목 {v0}건', { v0: findings.length });
+  const names = usedTools.map((tool) => toolName(tool.id)).filter(Boolean).join(', ');
+  runSummary.append(heading, el('p', '', names ? `${names} · ${total}` : total));
+  overview.append(runSummary);
+  const counts = new Map();
+  for (const finding of findings) {
+    const severity = findingSeverity(finding);
+    counts.set(severity, (counts.get(severity) ?? 0) + 1);
+  }
+  const severitySummary = el('ul', 'severity-summary');
+  for (const severity of Object.keys(severityKeys)) {
+    if (!counts.has(severity)) continue;
+    const item = el('li', 'severity-summary-item');
+    item.dataset.severity = severity;
+    item.append(el('span', '', severityName(severity)), el('strong', '', counts.get(severity)));
+    severitySummary.append(item);
+  }
+  if (counts.size) overview.append(severitySummary);
+  top.append(overview);
   const metadata = el('details', 'run-metadata');
-  metadata.append(el('summary', '', t('실행 정보 및 도구 범위')));
+  metadata.append(el('summary', '', t('검사 세부 정보')));
   const pairs = [
-    [t('실행 ID'), run.id], [t('대상 경로'), run.target?.path, '', true], [t('리비전'), run.target?.revision ?? t('기록 없음')],
+    [t('실행 ID'), run.id], [t('자료 ID'), artifact.id], [t('자료 SHA-256'), artifact.sha256], [t('대상 경로'), run.target?.path, '', true], [t('리비전'), run.target?.revision ?? t('기록 없음')],
     [t('작업 트리'), run.target?.dirty === true ? t('변경 있음') : run.target?.dirty === false ? t('변경 없음') : t('상태 미기록')],
     [t('시작'), run.startedAt], [t('종료'), run.endedAt],
     [t('저장된 발견 행'), run.findings?.length ?? 0], [t('결과 의미'), run.status === 'completed' ? t('실행 완료 · 안전 확인이 아님') : run.status === 'partial' ? t('부분 완료 · 범위가 제한됨') : t('실패 · 결과 범위 제한')],
@@ -537,7 +623,8 @@ function drawRun(parent, run, artifact) {
   const imported = (run.tools ?? []).some((item) => item.status === 'imported');
   if (imported) top.append(el('p', 'notice', t('가져온 결과 · 로컬 실행 아님')));
   if (run.status === 'partial') top.append(el('p', 'notice', t('부분 실행입니다. 누락되거나 제한된 검사 범위를 확인하세요.')));
-  if (run.verification === undefined && run.verificationPassed === undefined) top.append(el('p', 'muted', t('보고됨 · 검증 수준 미기록')));
+  if (run.verification === undefined && run.verificationPassed === undefined) metadata.append(el('p', 'muted', t('보고됨 · 검증 수준 미기록')));
+  metadata.append(el('p', 'muted', t('SAVED RUN · 원본 검사 재실행 안 함')));
   provenanceBlock(metadata, run.provenance ?? run.source);
   top.append(metadata);
   parent.append(top);
@@ -673,8 +760,6 @@ async function selectArtifact(id) {
   delete $('detail-content').dataset.comparisonPage;
   $('detail-state').hidden = false;
   chromeMessage('detail-state', '저장 자료를 여는 중…');
-  chromeMessages.delete('selection-mark');
-  $('selection-mark').textContent = id;
   drawCatalog();
   chromeMessage('live-status', '선택한 저장 자료를 여는 중입니다.');
   try {
@@ -687,11 +772,20 @@ async function selectArtifact(id) {
     selectedArtifact = artifact;
     if (artifact.kind === 'run' && value.run) {
       activeRun = value.run;
-      chromeMessage('workspace-title', '검사 기록');
+      desk().dataset.artifact = 'run';
+      $('catalog-disclosure').open = false;
+      chromeMessage('workspace-title', '보안 받은편지함');
       drawRun(parent, value.run, artifact);
-      chromeMessage('live-status', '{v0} 검사 기록을 표시했습니다.', { v0: value.run.id });
+      if (allFindings.length && window.matchMedia('(min-width: 1121px)').matches) {
+        findingView = transitionFindingView(allFindings, findingView, { selectedIndex: 0 });
+        drawFindingRows();
+        drawEvidence();
+      }
+      chromeMessage('live-status', '{v0} 검사 결과를 표시했습니다.', () => ({ v0: projectName(value.run.target?.path) }));
     } else if (artifact.kind === 'comparison' && value.comparison) {
       savedComparison = value.comparison;
+      desk().dataset.artifact = 'comparison';
+      $('catalog-disclosure').open = true;
       chromeMessage('workspace-title', '저장 비교');
       drawComparisonSummary(parent, value.comparison);
       chromeMessage('live-status', '저장된 비교를 표시했습니다. 원본 검사를 재검증하지 않았습니다.');
@@ -763,7 +857,7 @@ $('language-select').addEventListener('change', () => {
   }
   if (activeRun) {
     $('detail-content').replaceChildren();
-    chromeMessage('workspace-title', '검사 기록');
+    chromeMessage('workspace-title', '보안 받은편지함');
     drawRun($('detail-content'), activeRun, selectedArtifact);
   } else if (savedComparison) {
     $('detail-content').replaceChildren();
@@ -779,13 +873,13 @@ $('language-select').addEventListener('change', () => {
   drawEvidence();
   executionView?.render();
   document.querySelector('.desk').dataset.reading = reading;
-  window.scrollTo({ top: scroll });
+  window.scrollTo({ top: scroll, behavior: 'instant' });
 });
 $('evidence-back').addEventListener('click', () => {
   document.querySelector('.desk').dataset.reading = 'list';
   const button = document.querySelector(`.finding-select[data-finding-index="${listFocusIndex}"]`);
   button?.focus({ preventScroll: true });
-  window.scrollTo({ top: listScroll });
+  window.scrollTo({ top: listScroll, behavior: 'instant' });
 });
 
 $('reload').addEventListener('click', loadCatalog);
@@ -799,7 +893,6 @@ $('catalog-reset').addEventListener('click', () => {
 });
 $('compare-button').addEventListener('click', compareSelected);
 for (const id of ['baseline-select', 'current-select']) $(id).addEventListener('change', updateComparisonControls);
-chromeMessage('selection-mark', '선택 없음');
 chromeMessage('detail-state', '목록에서 저장된 검사 또는 비교를 선택하세요.');
 chromeMessage('workspace-title', '검사 기록');
 executionView = initializeExecutionView({ document, window, getLocale: () => locale, applyCatalog: applyExecutionCatalog, onModeChange: updateExecutionMode });

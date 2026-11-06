@@ -1,6 +1,61 @@
 import { translate } from './i18n.mjs';
 
 const text = (value) => String(value ?? '').toLocaleLowerCase();
+const nonempty = (value) => typeof value === 'string' && value.trim() ? value : undefined;
+const asArray = (value) => Array.isArray(value) ? value : [];
+const severityOrder = ['unknown', 'info', 'low', 'medium', 'high', 'critical'];
+
+export function findingSeverity(finding) {
+  return severityOrder.includes(finding?.severity) ? finding.severity : 'unknown';
+}
+const severityRank = (finding) => Math.max(0, severityOrder.indexOf(finding?.severity));
+const osvAdvisoryPrefix = 'https://osv.dev/vulnerability/';
+const osvId = (value) => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+const legacyOsvId = /^(?:GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}|(?:CVE|GO|PYSEC|RUSTSEC|OSV)-[0-9]{4}-[0-9]+)$/;
+
+export function sortFindingsBySeverity(findings) {
+  return [...asArray(findings)].sort((a, b) => severityRank(b) - severityRank(a));
+}
+
+function fixedPackageVersion(affected, name, ecosystem) {
+  if (!name || !ecosystem) return undefined;
+  const matching = asArray(affected).filter((entry) => entry?.package?.name === name && entry.package.ecosystem === ecosystem);
+  if (matching.length !== 1) return undefined;
+  // A single bounded version range gives an unambiguous fix boundary.
+  const ranges = asArray(matching[0].ranges);
+  if (ranges.length !== 1 || !['SEMVER', 'ECOSYSTEM'].includes(ranges[0]?.type)) return undefined;
+  const events = asArray(ranges[0].events);
+  if (events.length !== 2 || !nonempty(events[0]?.introduced)) return undefined;
+  return nonempty(events[1]?.fixed);
+}
+
+function osvAdvisoryUrl(finding) {
+  const id = finding.vulnerabilityId;
+  if (osvId(id)) return osvAdvisoryPrefix + id;
+  const ruleId = finding.ruleId;
+  if (typeof ruleId === 'string' && legacyOsvId.test(ruleId)) return osvAdvisoryPrefix + ruleId;
+  return asArray(finding.references).find((reference) =>
+    typeof reference === 'string' && reference.startsWith(osvAdvisoryPrefix)
+      && osvId(reference.slice(osvAdvisoryPrefix.length)));
+}
+
+export function findingPackage(finding) {
+  if (finding?.toolId !== 'osv') return {};
+  const packageRecord = finding.evidence?.package;
+  const locationPackage = nonempty(finding.location?.package) ?? '';
+  const separator = locationPackage.indexOf(':');
+  const name = nonempty(packageRecord?.name) ?? nonempty(locationPackage.slice(separator + 1));
+  const version = nonempty(packageRecord?.version) ?? nonempty(finding.location?.version);
+  const ecosystem = nonempty(packageRecord?.ecosystem) ?? (separator > 0 ? locationPackage.slice(0, separator) : undefined);
+  const fixedVersion = fixedPackageVersion(finding.evidence?.affected, name, ecosystem);
+  const advisoryUrl = osvAdvisoryUrl(finding);
+  return {
+    ...(name ? { name } : {}),
+    ...(version ? { version } : {}),
+    ...(fixedVersion ? { fixedVersion } : {}),
+    ...(advisoryUrl ? { advisoryUrl } : {}),
+  };
+}
 
 export function compactPath(value) {
   const full = String(value ?? '');
@@ -34,14 +89,15 @@ export function filterArtifacts(artifacts, { query = '', kind = 'all', status = 
 
 export function filterFindings(findings, { query = '', severity = 'all', tool = 'all' } = {}) {
   const q = text(query).trim();
-  return (Array.isArray(findings) ? findings : []).filter((finding) => {
+  return asArray(findings).filter((finding) => {
+    if ((severity !== 'all' && findingSeverity(finding) !== severity) || (tool !== 'all' && finding?.toolId !== tool)) return false;
+    if (!q) return true;
     const location = finding?.location;
     const locationText = typeof location === 'string' ? location : JSON.stringify(location ?? {});
+    const { name, version, fixedVersion } = findingPackage(finding);
     const haystack = [finding?.severity, finding?.ruleId, finding?.toolId, finding?.title,
-      finding?.description, location?.path, locationText].map(text).join(' ');
-    return (severity === 'all' || finding?.severity === severity)
-      && (tool === 'all' || finding?.toolId === tool)
-      && (!q || haystack.includes(q));
+      finding?.description, location?.path, locationText, name, version, fixedVersion].map(text).join(' ');
+    return haystack.includes(q);
   });
 }
 

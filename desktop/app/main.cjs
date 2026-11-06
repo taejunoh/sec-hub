@@ -83,7 +83,7 @@ if (!hasLock) {
     else requestQuit();
   }
   async function start() {
-    const [{ createViewerController, createNativeActions }, { isOwnedUrl, isTrustedSender }, { inspectDesktopTools }] = await Promise.all([
+    const [{ createViewerController, createNativeActions }, { advisoryBrowserUrl, isOwnedUrl, isTrustedSender }, { inspectDesktopTools }] = await Promise.all([
       import('./controller.mjs'), import('./policy.mjs'), import('./tools.mjs'),
     ]);
     const core = app.isPackaged ? path.join(process.resourcesPath, 'core') : path.resolve(__dirname, '..', '..');
@@ -126,7 +126,11 @@ if (!hasLock) {
     contents.on('will-frame-navigate', preventUntrusted);
     contents.on('will-redirect', preventUntrusted);
     contents.on('will-attach-webview', (event) => event.preventDefault());
-    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    contents.setWindowOpenHandler(({ url, postBody }) => {
+      const advisory = !postBody && window.isFocused() && advisoryBrowserUrl(url, contents.getURL(), activeUrl);
+      if (advisory) void shell.openExternal(advisory).catch(() => {});
+      return { action: 'deny' };
+    });
     contents.on('dom-ready', () => { loaded = true; });
     window.on('page-title-updated', (event) => event.preventDefault());
     contents.on('render-process-gone', () => { void friendlyFailure(); });

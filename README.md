@@ -15,17 +15,17 @@ dependency check without opening a terminal.
 
 ## Example scan
 
-![Developer Workbench showing four findings sorted by severity, with the selected advisory beside the list](docs/images/workbench-macos-results.png)
+![Security inbox with findings on the left and the selected advisory on the right](docs/images/security-inbox-wide.png)
 
-The updated Developer Workbench is shown here in a macOS development build.
-An OSV scan of the demo project's `lodash` 4.17.20 dependency reported four
-known vulnerabilities, two high and two medium.
+The screenshots show the current Security inbox with results from an OSV scan
+in the macOS development build. The demo project's `lodash` 4.17.20 dependency
+had four findings, two high and two medium.
 
-The scan summary shows the project, scanner, status, and counts by severity.
-Findings are sorted by severity. Search by package, title, or advisory ID, or
-filter by severity. Open a finding to see the affected version, the advisory,
-and any fix version recorded in it. Expand **Original evidence and metadata**
-to see the raw details.
+The inbox puts the highest severity findings first. Search by package, title,
+or advisory ID, or filter by severity. Select a finding to read its impact,
+affected version, and any fix listed in that advisory. Open **Saved scans and
+comparisons** to switch reports, or expand **Original evidence and metadata**
+to inspect the source details.
 
 On narrow screens, findings open in a full-width detail view. **Back to
 results** restores the search, filters, scroll position, and keyboard focus.
@@ -33,9 +33,9 @@ results** restores the search, filters, scroll position, and keyboard focus.
 <details>
 <summary>See the narrow layout</summary>
 
-![Narrow results list with the scan summary and findings sorted by severity](docs/images/workbench-narrow-list.png)
+![Narrow Security inbox with findings sorted by severity](docs/images/security-inbox-narrow-list.png)
 
-![Narrow finding detail showing the advisory and Back to results button](docs/images/workbench-narrow-detail.png)
+![Narrow finding detail with the advisory and Back to results button](docs/images/security-inbox-narrow-detail.png)
 
 </details>
 

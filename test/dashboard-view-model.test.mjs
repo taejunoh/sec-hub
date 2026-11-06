@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, gateLabel, pageItems, runStatusLabel, toolStatusLabel, verificationLabel, transitionFindingView } from '../src/web/view-model.mjs';
+import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, findingPackage, gateLabel, pageItems, runStatusLabel, sortFindingsBySeverity, toolStatusLabel, verificationLabel, transitionFindingView } from '../src/web/view-model.mjs';
 
 const artifacts = [
   { id: 'a'.repeat(64), kind: 'run', state: 'ready', label: 'runs/one/run.json', summary: { runId: 'same', status: 'partial', target: { path: '/alpha' }, tools: [{ id: 'osv', status: 'imported' }] } },
@@ -158,4 +158,61 @@ test('localized labels translate known semantics and retain unknown stored ident
   assert.equal(verificationLabel('candidate', 'en'), 'Candidate');
   assert.equal(toolStatusLabel('증거', 'en'), '증거');
   assert.equal(verificationLabel('증거', 'en'), '증거');
+});
+
+test('OSV display uses matched package evidence and a single version fix', () => {
+  const finding = {
+    toolId: 'osv',
+    vulnerabilityId: 'GHSA-29mw-wpgm-hmr9',
+    location: { package: 'npm:lodash', version: '4.17.20' },
+    evidence: {
+      package: { name: 'lodash', version: '4.17.20', ecosystem: 'npm' },
+      affected: [
+        { package: { name: 'lodash-es', ecosystem: 'npm' }, ranges: [{ type: 'SEMVER', events: [{ introduced: '0' }, { fixed: '5.0.0' }] }] },
+        { package: { name: 'lodash', ecosystem: 'npm' }, ranges: [{ type: 'SEMVER', events: [{ introduced: '4.0.0' }, { fixed: '4.17.21' }] }] },
+      ],
+    },
+  };
+  assert.deepEqual(findingPackage(finding), {
+    name: 'lodash', version: '4.17.20', fixedVersion: '4.17.21',
+    advisoryUrl: 'https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9',
+  });
+  assert.deepEqual(filterFindings([finding], { query: '4.17.21' }), [finding]);
+});
+
+test('OSV display falls back to saved locations and omits ambiguous or absent fixes', () => {
+  const location = { package: 'npm:@scope/package', version: '1.0.0' };
+  const finding = { toolId: 'osv', location, description: 'Upgrade to 2.0.0' };
+  assert.deepEqual(findingPackage(finding), { name: '@scope/package', version: '1.0.0' });
+  for (const range of [
+    { type: 'GIT', events: [{ introduced: '0' }, { fixed: 'e91d01c' }] },
+    { type: 'SEMVER', events: [{ introduced: '0' }, { fixed: '2.0.0' }, { introduced: '3.0.0' }] },
+    { type: 'SEMVER', events: [{ introduced: '0' }, { last_affected: '2.0.0' }] },
+  ]) {
+    const evidence = { affected: [{ package: { name: '@scope/package', ecosystem: 'npm' }, ranges: [range] }] };
+    assert.deepEqual(findingPackage({ ...finding, evidence }), { name: '@scope/package', version: '1.0.0' });
+  }
+  assert.deepEqual(findingPackage({ ...finding, toolId: 'semgrep' }), {});
+});
+
+test('OSV advisory links are canonical and use saved IDs, known legacy rule IDs, or canonical references', () => {
+  assert.deepEqual(findingPackage({
+    toolId: 'osv', references: ['javascript:alert(1)', 'https://example.com/advisory', 'https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9'],
+  }), { advisoryUrl: 'https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9' });
+  assert.deepEqual(findingPackage({
+    toolId: 'osv', ruleId: 'GHSA-29mw-wpgm-hmr9',
+  }), { advisoryUrl: 'https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9' });
+  assert.deepEqual(findingPackage({
+    toolId: 'osv', ruleId: 'UI-000', vulnerabilityId: '../other',
+    references: ['https://example.com/advisory', 'https://osv.dev/vulnerability/foo?redirect=x'],
+  }), {});
+});
+
+test('finding severity sort preserves original order and row identity for equal ranks', () => {
+  const findings = Object.freeze([
+    { severity: 'high' }, { severity: 'low' }, { severity: 'custom' }, { severity: 'critical' },
+    { severity: 'high' }, { severity: 'info' }, { severity: 'medium' }, { severity: 'unknown' },
+  ]);
+  const sorted = sortFindingsBySeverity(findings);
+  [3, 0, 4, 6, 1, 5, 2, 7].forEach((index, i) => assert.equal(sorted[i], findings[index]));
 });

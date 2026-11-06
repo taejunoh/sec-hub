@@ -20,6 +20,12 @@ export function browserUrl(value, ownedUrl) {
   return isOwnedUrl(value, ownedUrl) ? value : null;
 }
 
+export function advisoryBrowserUrl(value, source, ownedUrl) {
+  return source === ownedUrl && isOwnedUrl(source, ownedUrl)
+    && typeof value === 'string' && /^https:\/\/osv\.dev\/vulnerability\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
+    ? value : null;
+}
+
 export function isTrustedSender(event, contents, session, activeUrl) {
   if (!contents || contents.isDestroyed() || event.sender !== contents || contents.session !== session) return false;
   const frame = event.senderFrame;
