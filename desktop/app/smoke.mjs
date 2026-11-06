@@ -94,13 +94,43 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     const initial = controller.current.url;
     const selected = path.join(directory, 'controlled-results');
     await fs.mkdir(selected, { mode: 0o700 });
-    await fs.copyFile(new URL('./sample/example/run.json', import.meta.url), path.join(selected, 'run.json'));
+    const savedRun = JSON.parse(await fs.readFile(new URL('./sample/example/run.json', import.meta.url), 'utf8'));
+    const dependency = savedRun.findings[0];
+    dependency.location = { path: 'package-lock.json', package: 'npm:example', version: '1.0.0' };
+    dependency.evidence = { affected: [{
+      package: { name: 'example', ecosystem: 'npm' },
+      ranges: [{ type: 'SEMVER', events: [{ introduced: '0' }, { fixed: '1.1.0' }] }],
+    }] };
+    savedRun.tools[0].findings[0] = dependency;
+    const codeFinding = {
+      toolId: 'open-code-review', ruleId: 'UI-003', title: 'Example suggested code',
+      severity: 'medium', verification: 'candidate', location: { path: 'src/example.mjs', line: 1 },
+      evidence: { suggestionCode: 'validate("<fixture>");' },
+    };
+    savedRun.findings.push(codeFinding);
+    savedRun.tools.push({ id: 'open-code-review', selected: true, status: 'completed', findings: [codeFinding] });
+    await fs.writeFile(path.join(selected, 'run.json'), JSON.stringify(savedRun), { mode: 0o600 });
     selectFolder(selected);
     const switched = await actions.openSavedResults();
     const after = await inspectRenderer();
     summary.checks.folderSwitch = switched === true && controller.current.url !== initial && controller.current.example === false && after.catalog.artifacts.some((item) => item.state === 'ready') && after.executionStatus === 404 && await portClosed(initial);
     summary.nativeTitles.savedResults = await inspectNativeTitle('Security Scan Hub — Saved results');
     summary.checks.folderSwitch &&= summary.nativeTitles.savedResults.preserved;
+    summary.savedRecommendations = await bounded(window.webContents.executeJavaScript(`(async () => {
+      document.querySelector('#artifact-list button')?.click();
+      while (!document.querySelector('#finding-section .finding-select')) await new Promise((resolve) => setTimeout(resolve, 100));
+      const openFinding = (title) => {
+        Array.from(document.querySelectorAll('#finding-section .finding-select'))
+          .find((button) => button.textContent.includes(title))?.click();
+        return document.querySelector('#evidence-content .evidence-advisory');
+      };
+      const dependency = openFinding('Example dependency advisory');
+      const fixedVersion = dependency?.textContent.includes('fixed version (1.1.0)') ?? false;
+      const code = openFinding('Example suggested code');
+      const suggestion = code?.querySelector('pre')?.textContent === 'validate("<fixture>");';
+      return { fixedVersion, suggestion };
+    })()`), 7000, 'saved_recommendations_missing');
+    if (!summary.savedRecommendations.fixedVersion || !summary.savedRecommendations.suggestion) throw Error('saved_recommendations_mismatch');
     const project = path.join(directory, 'controlled-project');
     await fs.mkdir(project, { mode: 0o700 });
     // A pinned, harmless package coordinate exercises the official lookup without installing packages.
@@ -174,9 +204,16 @@ export async function runPackagedSmoke({ directory, window, controller, actions,
     const browserStatus = artifactId && (await fetch(new URL(`api/artifacts/${artifactId}`, controller.current.url))).status;
     const tools = Object.fromEntries((artifact?.run?.tools ?? []).filter(({ selected }) => selected).map(({ id, status }) => [id, status]));
     const combinedFinding = artifact?.run?.findings?.some((finding) => finding.toolId === 'php2shell' && finding.ruleId === 'php2shell-header-version');
-    summary.nativeScan = { ...summary.nativeScan, state: job.state, errorCode: job.errorCode, runStatus: job.runStatus, reportsReady: job.reportsReady, artifactId, browserStatus, tools, combinedFinding };
+    const recommendationVisible = await invoke(`(() => {
+      Array.from(document.querySelectorAll('#finding-section .finding-select'))
+        .find((button) => button.textContent.includes('Advertised PHP version may be vulnerable'))?.click();
+      const [check, action] = Array.from(document.querySelectorAll('#evidence-content .finding-action-steps > li'), (item) => item.textContent);
+      return Boolean(check?.includes('Check first') && check.includes('actual PHP version')
+        && action?.includes('Recommended action') && action.includes('If the installation is affected'));
+    })()`);
+    summary.nativeScan = { ...summary.nativeScan, state: job.state, errorCode: job.errorCode, runStatus: job.runStatus, reportsReady: job.reportsReady, artifactId, browserStatus, tools, combinedFinding, recommendationVisible };
     summary.checks.nativeScan = job.state === 'completed' && job.runStatus === 'completed' && job.reportsReady
-      && tools.osv === 'completed' && tools.php2shell === 'completed' && combinedFinding && browserStatus === 404;
+      && tools.osv === 'completed' && tools.php2shell === 'completed' && combinedFinding && recommendationVisible && browserStatus === 404;
     const secondEvent = secondInstance();
     secondary = spawn(process.execPath, ['--sec-hub-smoke', '--sec-hub-smoke-secondary'], { env: process.env, stdio: 'ignore', windowsHide: true });
     secondaryExit = new Promise((resolve, reject) => {

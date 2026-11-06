@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, findingPackage, gateLabel, pageItems, runStatusLabel, sortFindingsBySeverity, toolStatusLabel, verificationLabel, transitionFindingView } from '../src/web/view-model.mjs';
+import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, findingAction, findingPackage, gateLabel, pageItems, runStatusLabel, sortFindingsBySeverity, toolStatusLabel, verificationLabel, transitionFindingView } from '../src/web/view-model.mjs';
 
 const artifacts = [
   { id: 'a'.repeat(64), kind: 'run', state: 'ready', label: 'runs/one/run.json', summary: { runId: 'same', status: 'partial', target: { path: '/alpha' }, tools: [{ id: 'osv', status: 'imported' }] } },
@@ -215,4 +215,75 @@ test('finding severity sort preserves original order and row identity for equal 
   ]);
   const sorted = sortFindingsBySeverity(findings);
   [3, 0, 4, 6, 1, 5, 2, 7].forEach((index, i) => assert.equal(sorted[i], findings[index]));
+});
+
+test('finding actions use OSV even when saved affected ranges do not identify a fixed version', () => {
+  const finding = {
+    toolId: 'osv', description: 'Upgrade to 2.0.0.',
+    location: { package: 'npm:example', version: '1.0.0' },
+    evidence: { affected: [{
+      package: { name: 'example', ecosystem: 'npm' },
+      ranges: [{ type: 'SEMVER', events: [{ introduced: '0' }, { last_affected: '1.0.0' }] }],
+    }] },
+  };
+  assert.deepEqual(findingAction(finding), { kind: 'dependency' });
+  finding.evidence.affected[0].ranges[0].events[1] = { fixed: '1.1.0' };
+  assert.deepEqual(findingAction(finding), { kind: 'dependency', fixedVersion: '1.1.0' });
+});
+
+test('PHP header results prompt runtime checks without accepting an advertised fix', () => {
+  for (const patchStatus of ['unknown', 'potentially_vulnerable']) {
+    const finding = { toolId: 'php2shell', evidence: { patchStatus, phpVersion: '8.2.34', fixedVersion: '9.0.0' } };
+    assert.deepEqual(findingAction(finding), { kind: 'php' });
+  }
+});
+
+test('code finding actions use source-specific guidance and leave saved suggestions as text', () => {
+  for (const toolId of ['codex-security', 'skillspector']) {
+    const finding = { toolId, verification: 'candidate', evidence: { remediation: 'Bind parameters.' } };
+    const original = structuredClone(finding);
+    assert.deepEqual(findingAction(finding), { kind: 'code', guidance: 'Bind parameters.' });
+    assert.deepEqual(finding, original);
+  }
+  assert.deepEqual(findingAction({
+    toolId: 'open-code-review', evidence: { existingCode: 'unsafe(input)', suggestionCode: '  validate("<value>");' },
+  }), { kind: 'code', suggestion: '  validate("<value>");' });
+  assert.deepEqual(findingAction({
+    toolId: 'anthropic', evidence: { native: { recommendation: 'Reject invalid input.' } },
+  }), { kind: 'code', guidance: 'Reject invalid input.' });
+});
+
+test('Cloudflare native actions carry the saved strategy and bounded code changes', () => {
+  const finding = { toolId: 'cloudflare', evidence: { native: { remediation: {
+    strategy: 'Validate caller authorization.',
+    code_changes: [
+      { file_name: '', fixed_code: 'ignore incomplete suggestion' },
+      { file_name: 'src/auth.js', fixed_code: 'a'.repeat(5000) },
+      { file_name: 'src/a.js', fixed_code: 'a' },
+      { file_name: 'src/b.js', fixed_code: 'b' },
+      { file_name: 'src/c.js', fixed_code: 'c' },
+    ],
+  } } } };
+  const action = findingAction(finding);
+  assert.equal(action.kind, 'code');
+  assert.equal(action.guidance, 'Validate caller authorization.');
+  assert.deepEqual(action.changes.map(({ path }) => path), ['src/auth.js', 'src/a.js', 'src/b.js']);
+  assert.ok(action.changes[0].code.length <= 4000);
+  assert.ok(action.changes[0].code.endsWith('…'));
+});
+
+test('finding actions fall back to review when evidence has no supported fix', () => {
+  assert.deepEqual(findingAction({
+    toolId: 'cloudflare', location: { path: 'src/app.js' },
+    evidence: { native: { verdict: 'needs_validation' } },
+  }), { kind: 'review' });
+  assert.deepEqual(findingAction({
+    toolId: 'anthropic', evidence: { importedEvidence: { recommendation: 'Unstructured contract data' } },
+  }), { kind: 'review' });
+  assert.deepEqual(findingAction({
+    toolId: 'old-tool', remediation: 'Use safe parsing.',
+  }), { kind: 'code', guidance: 'Use safe parsing.' });
+  assert.deepEqual(findingAction({
+    toolId: 'skillspector', description: 'No saved fix', evidence: { remediation: ['wrong shape'] },
+  }), { kind: 'review' });
 });

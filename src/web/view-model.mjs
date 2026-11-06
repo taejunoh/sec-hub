@@ -57,6 +57,55 @@ export function findingPackage(finding) {
   };
 }
 
+function actionText(value, limit = 4000) {
+  if (!nonempty(value)) return undefined;
+  return value.length <= limit ? value : value.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/u, '') + '…';
+}
+
+export function findingAction(finding, dependency = findingPackage(finding)) {
+  const { toolId, evidence, remediation } = finding ?? {};
+  if (toolId === 'osv') {
+    const fixedVersion = nonempty(dependency?.fixedVersion);
+    return { kind: 'dependency', ...(fixedVersion ? { fixedVersion } : {}) };
+  }
+  if (toolId === 'php2shell') return { kind: 'php' };
+
+  let savedGuidance;
+  let suggestion;
+  const changes = [];
+  switch (toolId) {
+    case 'codex-security':
+    case 'skillspector':
+      savedGuidance = evidence?.remediation;
+      break;
+    case 'open-code-review':
+      suggestion = actionText(evidence?.suggestionCode);
+      break;
+    case 'anthropic':
+      savedGuidance = evidence?.native?.recommendation;
+      break;
+    case 'cloudflare': {
+      const nativeRemediation = evidence?.native?.remediation;
+      savedGuidance = nativeRemediation?.strategy;
+      for (const change of asArray(nativeRemediation?.code_changes)) {
+        const path = actionText(change?.file_name, 512);
+        const code = actionText(change?.fixed_code);
+        if (path && code) changes.push({ path, code });
+        if (changes.length === 3) break;
+      }
+      break;
+    }
+  }
+  const guidance = actionText(savedGuidance) ?? actionText(remediation);
+  if (!guidance && !suggestion && changes.length === 0) return { kind: 'review' };
+  return {
+    kind: 'code',
+    ...(guidance ? { guidance } : {}),
+    ...(suggestion ? { suggestion } : {}),
+    ...(changes.length ? { changes } : {}),
+  };
+}
+
 export function compactPath(value) {
   const full = String(value ?? '');
   const characters = Array.from(full);

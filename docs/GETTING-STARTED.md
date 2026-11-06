@@ -2,17 +2,17 @@
 
 ## 1. Download and open the app
 
-Choose the 0.2.2 prerelease ZIP for your computer. [GitHub release page](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.2)
+Choose the 0.2.3 prerelease ZIP for your computer. [GitHub release page](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.3)
 
 - **Mac with Apple silicon (M-series).**
   In Finder, double-click the downloaded ZIP. Then double-click **Sec Hub.app**
-  (Finder may display it as **Sec Hub**). [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-darwin-arm64-notarized-prerelease.zip)
+  (Finder may display it as **Sec Hub**). [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-darwin-arm64-notarized-prerelease.zip)
 - **Windows x64 (Intel or AMD).**
   In File Explorer, right-click the ZIP, choose **Extract All**, then open
   **Sec Hub.exe** in the extracted **Sec Hub** folder. Keep the extracted files
   together. Windows may show an unknown publisher warning because this build
   has no Sec Hub publisher signature. Keep your system protections enabled; if
-  your device blocks the app, check with your administrator. [Download the Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-win32-x64-prerelease.zip)
+  your device blocks the app, check with your administrator. [Download the Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-win32-x64-prerelease.zip)
 
 The app window is titled **Security Scan Hub** on both platforms.
 
@@ -23,7 +23,7 @@ the release page, look under **Assets** for the ZIP linked above. The
 The app includes its runtime and OSV Scanner. You can run your first OSV scan
 as soon as you open the app.
 
-To verify either download, use the release's [SHA-256 checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-SHA256SUMS.txt).
+To verify either download, use the release's [SHA-256 checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-SHA256SUMS.txt).
 
 ## 2. Scan a project folder
 
@@ -39,6 +39,11 @@ If the app opens in Korean, use the language menu at the top to switch to
    **Security Inbox**. To reopen it later, choose **File → Show recent scans**.
 
 ## 3. Understand the results
+
+Start with critical and high findings. Open a finding and look under
+**What to do next** for **Check first** and **Recommended action**. The app
+uses the scanner's saved evidence to show an advisory fix, a tool suggestion,
+or the checks to make before deciding what to change.
 
 OSV checks supported dependency files for known vulnerabilities. It needs an
 internet connection and may send package names and versions to OSV services.

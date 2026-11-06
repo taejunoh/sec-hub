@@ -1,6 +1,6 @@
 import { desktopToolName, initializeExecutionView } from './execution-view.mjs';
 import { translate } from './i18n.mjs';
-import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, findingPackage, findingSeverity, gateLabel, pageItems, runStatusLabel, sortFindingsBySeverity, toolStatusLabel, verificationLabel, transitionFindingView } from './view-model.mjs';
+import { categoryLabel, compactPath, comparisonControlState, filterArtifacts, filterFindings, findingAction, findingPackage, findingSeverity, gateLabel, pageItems, runStatusLabel, sortFindingsBySeverity, toolStatusLabel, verificationLabel, transitionFindingView } from './view-model.mjs';
 
 const $ = (id) => document.getElementById(id);
 const desk = () => document.querySelector('.desk');
@@ -360,6 +360,57 @@ function resetFindingView() {
   document.querySelector('.desk').dataset.reading = 'list';
   drawEvidence();
 }
+function drawFindingAction(finding, dependency) {
+  const action = findingAction(finding, dependency);
+  const section = el('section', 'evidence-field evidence-advisory');
+  section.append(el('h4', '', t('다음 조치')));
+  const source = toolName(finding.toolId);
+  if (source) section.append(el('p', 'muted', t('{v0} 검사 결과를 바탕으로 안내합니다.', { v0: source })));
+  const steps = el('ol', 'finding-action-steps');
+  const check = el('li');
+  const fix = el('li');
+  check.append(el('strong', '', t('먼저 확인할 것')));
+  fix.append(el('strong', '', t('권장 조치')));
+
+  if (action.kind === 'dependency') {
+    check.append(el('p', '', t('기록된 의존성 파일에서 패키지와 설치 버전을 확인하세요.')));
+    fix.append(el('p', '', action.fixedVersion
+      ? t('권고문의 수정 버전 {v0}을 기준으로 호환되는 버전으로 업데이트한 뒤 다시 검사하세요.', { v0: action.fixedVersion })
+      : t('패키지의 보안 권고문에서 영향 범위와 수정 버전을 확인하세요.')));
+    if (dependency.advisoryUrl) {
+      const link = el('a', '', t('보안 권고문 보기'));
+      link.href = dependency.advisoryUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      fix.append(link);
+    }
+  } else if (action.kind === 'php') {
+    check.append(el('p', '', t('HTTP 헤더는 단서입니다. 서버에서 실제 PHP 버전과 배포판의 보안 패치 적용 여부를 확인하세요.')));
+    if (finding.location?.url) check.append(el('p', 'mono', finding.location.url));
+    fix.append(el('p', '', t('영향받는 설치로 확인되면 공급업체의 보안 업데이트를 적용한 뒤 패치 상태를 다시 확인하세요.')));
+  } else {
+    check.append(el('p', '', t('보고된 위치와 근거를 살펴보고, 이 문제가 프로젝트에 실제로 영향을 주는지 확인하세요.')));
+    if (finding.location?.line) check.append(el('p', 'mono', t('보고된 줄 {v0}', { v0: finding.location.line })));
+    if (action.kind === 'code') {
+      fix.append(el('p', '', t('문제를 확인한 뒤 도구의 제안을 검토하고, 적용할 변경을 테스트한 후 다시 검사하세요.')));
+      if (action.guidance) {
+        fix.append(el('p', 'muted', t('도구가 제시한 수정 방향')), el('p', 'finding-action-guidance', action.guidance));
+      }
+      const changes = action.changes ?? (action.suggestion ? [{ code: action.suggestion }] : []);
+      for (const { path, code } of changes) {
+        fix.append(el('p', 'muted', t('도구가 제시한 코드')));
+        if (path) fix.append(el('p', 'mono', path));
+        fix.append(el('pre', 'mono', code));
+      }
+    } else {
+      fix.append(el('p', '', t('저장된 결과에 구체적인 수정안이 없습니다. 원본 근거로 원인을 확인한 뒤 변경을 결정하세요.')));
+    }
+  }
+  if (finding.verification === 'candidate') section.append(el('p', 'muted', t('검증 상태: 후보')));
+  steps.append(check, fix);
+  section.append(steps);
+  return section;
+}
 function drawEvidence() {
   const parent = $('evidence-content');
   parent.replaceChildren();
@@ -387,22 +438,10 @@ function drawEvidence() {
     description.append(el('h4', '', t('문제 설명')), advisoryText(el('p'), excerpt));
     article.append(description);
   }
-  if (dependency.fixedVersion || dependency.advisoryUrl) {
-    const advisory = el('section', 'evidence-field evidence-advisory');
-    advisory.append(el('h4', '', t('다음 조치')));
-    if (dependency.fixedVersion) advisory.append(el('p', '', t('권고문에 기록된 수정 버전: {v0}', { v0: dependency.fixedVersion })));
-    if (dependency.advisoryUrl) {
-      const link = el('a', '', t('보안 권고문 보기'));
-      link.href = dependency.advisoryUrl;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      advisory.append(link);
-    }
-    article.append(advisory);
-  }
   const locations = el('section', 'evidence-field');
   locations.append(el('h4', '', t('위치')), findingLocation(finding.location));
   article.append(locations);
+  article.append(drawFindingAction(finding, dependency));
   const raw = el('details', 'evidence-raw');
   raw.append(el('summary', '', t('원본 근거 및 메타데이터')));
   appendDefinitionGrid(raw, [
@@ -537,7 +576,9 @@ function drawFindings(parent, run) {
   controls.append(reset);
   const active = el('div', 'active-filters');
   active.setAttribute('aria-label', t('적용 중인 결과 필터'));
-  section.append(detailHeading(t('발견 항목'), ''), controls, active);
+  section.append(detailHeading(t('발견 항목'), ''));
+  if (findingTools.length) section.append(el('p', 'muted', t('치명적·높음 항목부터 검토하고, 후보는 실제 영향 여부를 먼저 확인하세요.')));
+  section.append(controls, active);
   const scroll = el('div', 'table-scroll');
   const table = el('table', 'finding-table');
   table.setAttribute('role', 'table');

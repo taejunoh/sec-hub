@@ -297,6 +297,9 @@ pre { max-height: 22rem; overflow: auto; margin: .4rem 0; padding: .65rem; borde
 .evidence-field p, .evidence-field ul { margin: .4rem 0; font-size: .875rem; line-height: 1.6; overflow-wrap: anywhere; }
 .evidence-description { border-top: 0; padding-top: 0; }
 .evidence-advisory a { color: var(--accent); font-weight: 650; text-underline-offset: .2em; }
+.finding-action-steps { margin: .55rem 0; padding-inline-start: 1.35rem; font-size: .875rem; }
+.finding-action-steps > li + li { margin-top: .75rem; }
+.finding-action-guidance { white-space: pre-wrap; }
 .evidence-raw { margin-top: 1rem; padding: .55rem 0; border-top: 1px solid var(--line); }
 .evidence-raw > summary { padding-block: .3rem; }
 .evidence-field ul { padding-left: 1.1rem; }

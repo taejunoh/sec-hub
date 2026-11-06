@@ -54,11 +54,16 @@ in the macOS 0.2.0 development build. The demo project's `lodash` 4.17.20
 dependency had four findings, two high and two medium. The 0.2.1 and 0.2.2
 prerelease packages include this inbox.
 
-The inbox puts the highest severity findings first. Search by package, title,
-or advisory ID, or filter by severity. Select a finding to read its impact,
-affected version, and any fix listed in that advisory. Open **Saved scans and
-comparisons** to switch reports, or expand **Original evidence and metadata**
-to inspect the source details.
+The inbox puts the highest severity findings first. Start with critical and
+high findings, and confirm whether candidates affect your project. Search by
+package, title, or advisory ID, or filter by severity.
+
+In 0.2.3, open a finding and look under **What to do next** for **Check first**
+and **Recommended action**. The guidance uses saved scanner evidence, such
+as an advisory's fixed version or code suggested by a tool. For PHP header
+warnings, it explains how to verify the installed version and patch status.
+When the saved result has no specific fix, it directs you to the evidence to
+review. Expand **Original evidence and metadata** for the full record.
 
 On narrow screens, findings open in a full-width detail view. **Back to
 results** restores the search, filters, scroll position, and keyboard focus.
@@ -72,14 +77,14 @@ results** restores the search, filters, scroll position, and keyboard focus.
 
 </details>
 
-## Download Security Scan Hub Desktop 0.2.2
+## Download Security Scan Hub Desktop 0.2.3
 
-Version 0.2.2 is a prerelease. Select several security tools, start one scan,
+Version 0.2.3 is a prerelease. Select several security tools, start one scan,
 and review their findings and run status together in the **Security Inbox**.
 
 ### Install on Mac (Apple silicon)
 
-1. Download the Developer ID-signed and notarized package. [Download Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-darwin-arm64-notarized-prerelease.zip)
+1. Download the Developer ID-signed and notarized package. [Download Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-darwin-arm64-notarized-prerelease.zip)
 2. In Finder, double-click the ZIP to extract it.
 3. Open **Sec Hub.app**. The app window is titled **Security Scan Hub**.
 
@@ -88,7 +93,7 @@ after setup.
 
 ### Install on Windows (x64)
 
-1. Download the Windows x64 prerelease for Intel and AMD PCs. [Download Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-win32-x64-prerelease.zip)
+1. Download the Windows x64 prerelease for Intel and AMD PCs. [Download Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-win32-x64-prerelease.zip)
 2. In File Explorer, right-click the ZIP and choose **Extract All**.
 3. Open **Sec Hub.exe** from the extracted folder. Keep the extracted files together.
 
@@ -97,13 +102,13 @@ warning. Up to five integrations are available after setup. The Cloudflare
 and Anthropic workflows are disabled on Windows.
 
 OSV Scanner is bundled on both platforms. Other tools require setup, and AI
-tools require provider sign-in and consent. [Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.2)
-· [Verify ZIP checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-SHA256SUMS.txt)
+tools require provider sign-in and consent. [Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.3)
+· [Verify ZIP checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-SHA256SUMS.txt)
 
 The earlier OSV-only [0.2.1 prerelease](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1) is still
 available for users who need that version.
 
-## Run your first scan with 0.2.2
+## Run your first scan with 0.2.3
 
 1. In **Project security scan**, click **Choose folder** and select the project
    folder you want to check. For a first scan, choose the root folder of a

@@ -1,11 +1,11 @@
 # Security Scan Hub desktop
 
-Choose the **Security Scan Hub Desktop 0.2.2** prerelease ZIP for your
-computer. [GitHub release page](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.2)
+Choose the **Security Scan Hub Desktop 0.2.3** prerelease ZIP for your
+computer. [GitHub release page](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.3)
 
-- macOS Apple silicon, signed and notarized. [Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-darwin-arm64-notarized-prerelease.zip)
-- Windows x64, unsigned. [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-win32-x64-prerelease.zip)
-- [SHA-256 checksums for both ZIPs](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-SHA256SUMS.txt)
+- macOS Apple silicon, signed and notarized. [Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-darwin-arm64-notarized-prerelease.zip)
+- Windows x64, unsigned. [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-win32-x64-prerelease.zip)
+- [SHA-256 checksums for both ZIPs](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.3/sec-hub-desktop-0.2.3-SHA256SUMS.txt)
 
 Extract the ZIP and open `Sec Hub.app` on Mac or `Sec Hub.exe` on Windows.
 The app window is titled **Security Scan Hub**. [Step-by-step installation](../docs/GETTING-STARTED.md#1-download-and-open-the-app)
