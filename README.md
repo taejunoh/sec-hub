@@ -8,7 +8,7 @@ were skipped, or failed. Results are available as HTML, JSON, and SARIF.
 **Desktop quick start.** Download the [desktop prerelease](https://github.com/taejunoh/security-scan-hub/releases)
 and run Google OSV Scanner without a terminal. To run multiple tools,
 select them in the app and click **Start scan**. The combined report opens
-automatically in the **Security Inbox**. A supported Mac can run all seven
+automatically in the **Security Inbox**. An Apple silicon Mac can run all seven
 after setup. On Windows, the Cloudflare and Anthropic workflows are disabled.
 Follow the [desktop setup guide](desktop/README.md#run-a-multi-tool-scan).
 
@@ -98,9 +98,8 @@ integrations after setup.
 3. Open **Sec Hub.app**. The app window is titled **Security Scan Hub**.
 
 The Intel package bundles OSV Scanner for a first scan without Terminal.
-It requires macOS 13 or later. Release validation targets a macOS 15 Intel
-runner; other macOS versions and the other scanner integrations are not covered
-by that validation.
+It requires macOS 13 or later. Release validation covers the bundled OSV scan
+on macOS 15 on Intel.
 
 ### Install on Windows (x64)
 

@@ -12,9 +12,8 @@ Extract the ZIP and open `Sec Hub.app` on Mac or `Sec Hub.exe` on Windows.
 The app window is titled **Security Scan Hub**. [Step-by-step installation](../docs/GETTING-STARTED.md#1-download-and-open-the-app)
 
 The Intel package bundles OSV Scanner for a first scan without Terminal.
-It requires macOS 13 or later. Release validation targets a macOS 15 Intel
-runner; other macOS versions and the other scanner integrations are not covered
-by that validation.
+It requires macOS 13 or later. Release validation covers the bundled OSV scan
+on macOS 15 on Intel.
 
 The scanner build bundles a pinned OSV Scanner. In **Project security scan**,
 choose a folder, keep **OSV Scanner** selected, and click **Start scan**.
@@ -51,11 +50,12 @@ that OSV checked.
 | Cloudflare Security Audit Skill | [Get the official skill](https://github.com/cloudflare/security-audit-skill) at the example revision. Install and sign in to Codex CLI 0.164.0 on macOS, then configure the checkout and a separate work folder. |
 | Anthropic Defending Code | [Get the official harness](https://github.com/anthropics/defending-code-reference-harness) at the example revision and [set up and sign in to Claude Code](https://code.claude.com/docs/en/setup). Configure the checkout and a separate work folder. The app runs the static `/vuln-scan` skill. |
 
-The restricted Cloudflare and Anthropic workflows are available on macOS.
-They are disabled on Windows pending validation of their restricted
-execution environments there. The other integrations can be configured
-individually. Authentication is handled by each provider. AI tools may send project
-data to the configured provider and consume usage or incur charges.
+The restricted Cloudflare and Anthropic workflows are available on Apple
+silicon macOS. They are not validated on Intel and are disabled on Windows
+pending validation of their restricted execution environments there. The other
+integrations can be configured individually. Each provider handles its own
+authentication. AI tools may send project data to the configured provider
+and consume usage or incur charges.
 
 ## Package signing
 

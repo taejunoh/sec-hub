@@ -18,12 +18,11 @@ Choose the 0.2.4 prerelease ZIP for your computer. [GitHub release page](https:/
   has no Sec Hub publisher signature. Keep your system protections enabled; if
   your device blocks the app, check with your administrator. [Download the Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.4/sec-hub-desktop-0.2.4-win32-x64-prerelease.zip)
 
-The app window is titled **Security Scan Hub** on both platforms.
+The app window is titled **Security Scan Hub**.
 
-The Intel package requires macOS 13 or later. Release validation targets a
-macOS 15 Intel runner; other macOS versions and the other scanner integrations
-are not covered by that validation. To use the CLI and local browser instead, see the optional
-[Intel Mac Terminal fallback](#intel-mac-scan-from-terminal).
+The Intel package requires macOS 13 or later. Release validation covers the
+bundled OSV scan on macOS 15 on Intel. You can also scan from Terminal and
+view the report in a browser. [Intel Mac Terminal fallback](#intel-mac-scan-from-terminal)
 
 The Windows ZIP requires an x64 PC. If you're downloading from the
 release page, look under **Assets** for the ZIP linked above. The
