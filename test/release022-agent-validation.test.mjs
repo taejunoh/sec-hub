@@ -22,12 +22,10 @@ test('#15 rejects echoed commented substring and foreign-file instruction claims
 test('#15 accepts literal supported pinned readers and static cwd shell wrappers',()=>{
  for(const command of ['cat /official/skills/security-audit/SKILL.md',"/bin/zsh -lc 'cat /official/skills/security-audit/SKILL.md'","sed -n '1,200p' /official/skills/security-audit/SKILL.md",'head -n 200 /official/skills/security-audit/SKILL.md',"/bin/zsh -lc 'cd /official/skills/security-audit && cat SKILL.md'",'cat .agents/skills/security-audit/SKILL.md'])assert.equal(proof(command),true,command);
 });
-test('#15 retained genuine native command evidence still proves pinned reads offline',async()=>{
- const path=resolve('verification/native-agent-execution-retry/raw/cloudflare/native-events.jsonl');const events=(await readFile(path,'utf8')).trim().split('\n').map(JSON.parse);
- // Frozen provenance context for this retained recording; string parsing only.
- // Never resolve or read the historic host path, or rewrite retained event bytes.
- const historicalSkillRoot='/Users/example/Documents/Codex/2026-10-27/ai-7-cloudflare-anthropic-openai-nvidia/work/tools/cloudflare-security-audit';
- assert.equal(inspectNativeEvents('cloudflare',events,{skillRoot:historicalSkillRoot}).instructionRead,true);
+test('#15 recognizes a pinned read in a native shell command event',()=>{
+ const skillRoot='/fixture/cloudflare-security-audit';
+ const command=`/bin/zsh -lc 'cat ${skillRoot}/skills/security-audit/SKILL.md'`;
+ assert.equal(inspectNativeEvents('cloudflare',[event(command)],{skillRoot}).instructionRead,true);
 });
 test('#14 real legacy validator rejects incomplete and absent status even with empty reasons',async()=>{
  const root=await mkdtemp(join(tmpdir(),'release022-legacy-'));try{

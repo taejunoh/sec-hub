@@ -1,16 +1,12 @@
 # Sec Hub desktop
 
-The **Sec Hub desktop 0.2.1 private prerelease** is available from the
-[GitHub release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1).
-Sign in with an account that can access this private repository. Download:
+If the **Sec Hub Desktop 0.2.1 prerelease** assets are available on the
+[GitHub release page](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1),
+choose the ZIP for your platform.
 
 - macOS Apple silicon: [Developer ID signed and notarized ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip)
 - Windows x64: [prerelease ZIP; no Sec Hub publisher signature](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip)
 - Checksums for both ZIPs: [SHA256SUMS.txt](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt)
-
-The older
-[desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
-is a saved-results viewer; it cannot scan a project.
 
 The scanner build bundles a pinned OSV Scanner. In **Project security scan**,
 choose a folder, keep **OSV Scanner** selected, and start the scan. Choose

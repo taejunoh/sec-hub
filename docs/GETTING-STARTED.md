@@ -3,9 +3,7 @@
 ## 1. Download and open the app
 
 [Sec Hub Desktop 0.2.1](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.2.1)
-is a private prerelease. Sign in to GitHub with an account that has access to
-the Sec Hub repository. If the link shows a 404, check that you're signed in
-with the right account or ask the repository owner for access.
+is a prerelease. If the assets are available, choose the ZIP for your computer.
 
 - **Mac with Apple silicon (M-series):** [Download the signed and notarized Mac ZIP](https://github.com/taejunoh/sec-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip).
   In Finder, double-click the downloaded ZIP. Then double-click **Sec Hub.app**
@@ -50,6 +48,3 @@ project is safe.
 OSV is the only scanner this desktop release can run. Other scanners,
 including AI tools, may appear in the setup section. The app cannot run them
 or confirm whether they are installed or signed in to a provider.
-
-The [older desktop 0.1.0 release](https://github.com/taejunoh/sec-hub/releases/tag/desktop-v0.1.0)
-can open saved reports but cannot scan projects.

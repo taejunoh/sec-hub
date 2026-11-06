@@ -7,7 +7,7 @@ import { startHeaderFixture } from '../test/helpers/php-header-server.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const workspaceRoot = path.resolve(projectRoot, '../..');
-const node24 = '/Users/example/.nvm/versions/node/v24.22.1/bin/node';
+const node24 = process.execPath;
 const usage = 'Usage: node scripts/live-verify.mjs --config ABSOLUTE_CONFIG --out NEW_ABSOLUTE_SCAN_DIR';
 
 function parseArgs(argv) {

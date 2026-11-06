@@ -42,8 +42,7 @@ results** restores the search, filters, scroll position, and keyboard focus.
 
 ## Download Sec Hub Desktop 0.2.1
 
-This is a **private prerelease**. Sign in to GitHub with an account that has
-access to the Sec Hub repository.
+When the 0.2.1 prerelease assets are available, choose the ZIP for your computer.
 
 | Your computer | Download |
 | --- | --- |
@@ -90,9 +89,7 @@ dependency files that OSV checked.
 
 ## For developers
 
-- [CLI 0.3.2 package](releases/sec-hub-local-0.3.2.tgz) and its
-  [technical reference](docs/REFERENCE.md)
+- [CLI setup and technical reference](docs/REFERENCE.md)
 - [Sample report from a multi-tool CLI scan](docs/sample-report.html)
 - [Desktop build and packaging notes](desktop/README.md)
 - [Release and verification history](docs/HISTORY.md)
-- [Seven-tool validation record](verification/seven-tools-validation-2026-10-29/REPORT.md)

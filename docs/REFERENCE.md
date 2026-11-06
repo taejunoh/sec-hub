@@ -2,9 +2,9 @@
 
 Use the [README quick start](../README.md) for a first scan. This page keeps the advanced CLI, dashboard, integration, and security details for operators and reviewers. Shell examples are run from the repository root unless stated otherwise. The older README's nested `cd outputs/sec-hub` example applied only to one development workspace and is not a setup step for a fresh checkout.
 
-The [October 29 seven-tool validation](../verification/seven-tools-validation-2026-10-29/REPORT.md) records a completed Anthropic `/vuln-scan --single --no-score` static run and strict 7/7 aggregation. Its one high-severity result remains a candidate; dynamic verification was not performed. CLI 0.3.1 source tests, artifact QA, and all six hosted CI jobs passed. The final offline package/archive smoke remains pending.
+The October 29 seven-tool validation records a completed Anthropic `/vuln-scan --single --no-score` static run and strict 7/7 aggregation. Its one high-severity result remains a candidate; dynamic verification was not performed. CLI 0.3.1 source tests, artifact QA, and all six hosted CI jobs passed. The final offline package/archive smoke remains pending.
 
-The 0.3.0 hosted CI run validates a six-job platform/runtime matrix; it does not mean six security-tool integrations were scanned. Its package smoke uses synthetic execution, with no provider calls. See the [0.3.0 CI report](../verification/ci-after-budget-2026-10-28/REPORT.md) for that historical result.
+The 0.3.0 hosted CI run validates a six-job platform/runtime matrix; it does not mean six security-tool integrations were scanned. Its package smoke uses synthetic execution, with no provider calls.
 
 ## Product behavior and safety
 
@@ -14,7 +14,7 @@ Sec Hub does not automatically run scripts from the target repository or install
 
 ## Historical platform and security behavior (0.2.3)
 
-At the 0.2.3 metadata-change validation point, the Node 24 full suite for the #31/#40 runtime regression checks passed 423 of 424 tests, with no failures and one native Windows skip. This was not a full-suite rerun after changing the 0.2.3 metadata. The `taskkill /T /F` behavior for #31 was checked on Darwin using an OS-boundary mock; it was not verified on an actual Windows host. Fix #40 enforces a permissions policy that trusts ancestor ownership by root (UID 0) or the current effective UID; directory swaps by a malicious process running under the same UID remain out of scope. See the [#31/#40 local remediation and verification report](../verification/high31-40-remediation/REPORT.md).
+At the 0.2.3 metadata-change validation point, the Node 24 full suite for the #31/#40 runtime regression checks passed 423 of 424 tests, with no failures and one native Windows skip. This was not a full-suite rerun after changing the 0.2.3 metadata. The `taskkill /T /F` behavior for #31 was checked on Darwin using an OS-boundary mock; it was not verified on an actual Windows host. Fix #40 enforces a permissions policy that trusts ancestor ownership by root (UID 0) or the current effective UID; directory swaps by a malicious process running under the same UID remain out of scope.
 
 These historical boundaries affected supported behavior. On Windows, the safe filesystem helper fails closed on source and skill-root reads as well as report writes. On macOS, it rejects shared writable ancestors (including the fixed sticky `/tmp`) and ALLOW or unknown ACLs; checking ACLs at each ancestor increases startup, source inspection, and report-writing time. Linux mode/sticky policy was not tested on native Linux at that validation point. The Darwin ACL helper was run on macOS arm64; the universal x86_64 slice was not separately run natively.
 
@@ -99,7 +99,7 @@ Only one scan can run at a time; there is no queue. Each server session allows a
 
 After report writing finishes, the operator must explicitly choose **Refresh results** to add the new run to the list and open it. Results are not refreshed automatically. If a new run exceeds the dashboard catalog limit, the UI says that no result link is available. Cancellation remains `cancelling` until cleanup of owned processes is confirmed. The execution panel is hidden in read-only mode.
 
-Trust the scanners, configuration, Git, and target files running under the same OS user. This feature is not OS isolation from other processes under the same user and is not a sandbox for hostile code. Windows safe report writes remain fail closed, so writing scan reports on Windows is unsupported. See the [web-execution report](../verification/web-execution/REPORT.md) for verified execution, cancellation, refresh scope, and release-gate limits.
+Trust the scanners, configuration, Git, and target files running under the same OS user. This feature is not OS isolation from other processes under the same user and is not a sandbox for hostile code. Windows safe report writes remain fail closed, so writing scan reports on Windows is unsupported.
 
 Bridge guidance, export of the import contract, and result import:
 
