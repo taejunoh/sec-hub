@@ -77,35 +77,41 @@ results** restores the search, filters, scroll position, and keyboard focus.
 Version 0.2.2 is a prerelease. Select several security tools, start one scan,
 and review their findings and run status together in the **Security Inbox**.
 
-| Your computer | Download |
-| --- | --- |
-| Mac with Apple silicon (M-series) | [Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-darwin-arm64-notarized-prerelease.zip), signed with Developer ID and notarized |
-| Windows x64 (Intel or AMD) | [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-win32-x64-prerelease.zip), without a Sec Hub publisher signature. Windows may show an unknown publisher warning. |
+### Install on Mac (Apple silicon)
 
-This release supports Apple silicon Macs and Windows x64 PCs. Intel Macs
-and Windows ARM devices are outside its support range.
-OSV Scanner is bundled. The other tools require setup, and AI tools require
-provider sign-in and consent. All seven integrations are available on a
-supported Mac after setup. Cloudflare and Anthropic are disabled on Windows.
-[Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.2).
-Verify either ZIP with the [SHA-256 checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-SHA256SUMS.txt).
+1. Download the Developer ID-signed and notarized package. [Download Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-darwin-arm64-notarized-prerelease.zip)
+2. In Finder, double-click the ZIP to extract it.
+3. Open **Sec Hub.app**. The app window is titled **Security Scan Hub**.
+
+The Mac package supports M-series Macs and can run all seven integrations
+after setup.
+
+### Install on Windows (x64)
+
+1. Download the Windows x64 prerelease for Intel and AMD PCs. [Download Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-win32-x64-prerelease.zip)
+2. In File Explorer, right-click the ZIP and choose **Extract All**.
+3. Open **Sec Hub.exe** from the extracted folder. Keep the extracted files together.
+
+The Windows package is unsigned, so Windows may show an unknown publisher
+warning. Up to five integrations are available after setup. The Cloudflare
+and Anthropic workflows are disabled on Windows.
+
+OSV Scanner is bundled on both platforms. Other tools require setup, and AI
+tools require provider sign-in and consent. [Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.2)
+· [Verify ZIP checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-SHA256SUMS.txt)
 
 The earlier OSV-only [0.2.1 prerelease](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1) is still
 available for users who need that version.
 
 ## Run your first scan with 0.2.2
 
-1. **Extract the ZIP.** On Mac, double-click the ZIP and open **Sec Hub.app**.
-   The app opens as **Security Scan Hub**. On Windows, right-click the ZIP,
-   choose **Extract All**, then open **Sec Hub.exe** from the extracted folder.
-   Keep the Windows app files together.
-2. In **Project security scan**, click **Choose folder** and select the project
+1. In **Project security scan**, click **Choose folder** and select the project
    folder you want to check. For a first scan, choose the root folder of a
    JavaScript project that contains `package-lock.json`. If the app opens in
    Korean, select **English** at the top of the window.
-3. Keep **OSV Scanner** selected and click **Start scan**. OSV Scanner is
+2. Keep **OSV Scanner** selected and click **Start scan**. OSV Scanner is
    bundled, so this first scan needs no other setup.
-4. When the scan finishes, the **Security inbox** opens the report.
+3. When the scan finishes, the **Security Inbox** opens the report.
    To open it later, choose **File → Show recent scans**.
 
 A completed scan with no findings means OSV Scanner found no known
