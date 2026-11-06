@@ -47,8 +47,8 @@ describes how results from the seven integrations were checked and combined.
 
 The screenshots show the Security Inbox with results from an OSV scan
 in the macOS 0.2.0 development build. The demo project's `lodash` 4.17.20
-dependency had four findings, two high and two medium. The 0.2.1 prerelease
-packages include this inbox.
+dependency had four findings, two high and two medium. The 0.2.1 and 0.2.2
+prerelease packages include this inbox.
 
 The inbox puts the highest severity findings first. Search by package, title,
 or advisory ID, or filter by severity. Select a finding to read its impact,
@@ -68,39 +68,48 @@ results** restores the search, filters, scroll position, and keyboard focus.
 
 </details>
 
-## Download Sec Hub Desktop 0.2.1
+## Download Security Scan Hub Desktop 0.2.2
 
-This earlier OSV-only release is listed here for users who need version 0.2.1.
-For the current Security Scan Hub desktop build, see [GitHub Releases](https://github.com/taejunoh/security-scan-hub/releases).
+Version 0.2.2 is a prerelease. Select several security tools, start one scan,
+and review their findings and run status together in the **Security Inbox**.
 
 | Your computer | Download |
 | --- | --- |
-| Mac with Apple silicon (M-series) | [Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-darwin-arm64-notarized-prerelease.zip), signed and notarized |
-| Windows x64 (Intel or AMD) | [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-win32-x64-prerelease.zip), without a Sec Hub publisher signature. Windows may show an unknown publisher warning. |
+| Mac with Apple silicon (M-series) | [Mac ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-darwin-arm64-notarized-prerelease.zip), signed with Developer ID and notarized |
+| Windows x64 (Intel or AMD) | [Windows ZIP](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-win32-x64-prerelease.zip), without a Sec Hub publisher signature. Windows may show an unknown publisher warning. |
 
 This release supports Apple silicon Macs and Windows x64 PCs. Intel Macs
 and Windows ARM devices are outside its support range.
-[Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1).
-Verify either ZIP with the [SHA-256 checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.1/sec-hub-desktop-0.2.1-SHA256SUMS.txt).
+OSV Scanner is bundled. The other tools require setup, and AI tools require
+provider sign-in and consent. All seven integrations are available on a
+supported Mac after setup. Cloudflare and Anthropic are disabled on Windows.
+[Browse all release assets](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.2).
+Verify either ZIP with the [SHA-256 checksums](https://github.com/taejunoh/security-scan-hub/releases/download/desktop-v0.2.2/sec-hub-desktop-0.2.2-SHA256SUMS.txt).
 
-## Run your first scan with 0.2.1
+The earlier OSV-only [0.2.1 prerelease](https://github.com/taejunoh/security-scan-hub/releases/tag/desktop-v0.2.1) is still
+available for users who need that version.
+
+## Run your first scan with 0.2.2
 
 1. **Extract the ZIP.** On Mac, double-click the ZIP and open **Sec Hub.app**.
-   On Windows, right-click the ZIP, choose **Extract All**, then open
-   **Sec Hub.exe** from the extracted folder. Keep the Windows app files together.
+   The app opens as **Security Scan Hub**. On Windows, right-click the ZIP,
+   choose **Extract All**, then open **Sec Hub.exe** from the extracted folder.
+   Keep the Windows app files together.
 2. In **Project security scan**, click **Choose folder** and select the project
    folder you want to check. For a first scan, choose the root folder of a
    JavaScript project that contains `package-lock.json`. If the app opens in
    Korean, select **English** at the top of the window.
-3. Keep **OSV Scanner** selected and click **Start scan**.
-4. When the scan finishes, click **Refresh results & open** to read the report
-   in the **Security inbox**.
+3. Keep **OSV Scanner** selected and click **Start scan**. OSV Scanner is
+   bundled, so this first scan needs no other setup.
+4. When the scan finishes, the **Security inbox** opens the report.
    To open it later, choose **File → Show recent scans**.
 
 A completed scan with no findings means OSV Scanner found no known
 vulnerabilities in the dependencies it checked. If the scan fails, check the
 error message and try again after resolving it.
 
+To add more tools to the same scan, follow
+[Run a multi-tool scan](desktop/README.md#run-a-multi-tool-scan).
 [See the full setup and scan guide](docs/GETTING-STARTED.md).
 
 ## How the desktop scan works
