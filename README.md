@@ -15,11 +15,29 @@ dependency check without opening a terminal.
 
 ## Example scan
 
-![Sec Hub Desktop showing four OSV findings and the selected lodash advisory](docs/images/desktop-osv-results.png)
+![Developer Workbench showing four findings sorted by severity, with the selected advisory beside the list](docs/images/workbench-macos-results.png)
 
-An actual OSV scan in the macOS desktop development build found four known
-vulnerabilities in the demo project's `lodash` 4.17.20 dependency. Select a
-finding to see its severity, the advisory ID, and where it was found.
+The updated Developer Workbench is shown here in a macOS development build.
+An OSV scan of the demo project's `lodash` 4.17.20 dependency reported four
+known vulnerabilities, two high and two medium.
+
+The scan summary shows the project, scanner, status, and counts by severity.
+Findings are sorted by severity. Search by package, title, or advisory ID, or
+filter by severity. Open a finding to see the affected version, the advisory,
+and any fix version recorded in it. Expand **Original evidence and metadata**
+to see the raw details.
+
+On narrow screens, findings open in a full-width detail view. **Back to
+results** restores the search, filters, scroll position, and keyboard focus.
+
+<details>
+<summary>See the narrow layout</summary>
+
+![Narrow results list with the scan summary and findings sorted by severity](docs/images/workbench-narrow-list.png)
+
+![Narrow finding detail showing the advisory and Back to results button](docs/images/workbench-narrow-detail.png)
+
+</details>
 
 ## Download Sec Hub Desktop 0.2.0
 
